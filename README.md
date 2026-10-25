@@ -57,6 +57,11 @@ Im Log der Action steht die Zeile **BEZAHLARTIKEL ENTFERNT**. Dort siehst du, wi
 - `map.json`: Weltkarte (Natural Earth, öffentlich nutzbar), 194 von 195 Staaten außer Tuvalu.
 - Profile verlinken auf eine Wikipedia-Suche, damit kein Link ins Leere läuft.
 
+## Bedienung
+
+- **Zurück wischen:** Vom linken Bildschirmrand nach rechts wischen. Das schließt zuerst Profil oder Album, dann das Spiel, und auf den Reitern geht es einen Reiter zurück (Lernen, Lesen, Nachrichten).
+- **Keine Scroll-Leiste:** Die Seite scrollt in einem eigenen Container ohne sichtbare Leiste.
+
 ## Gut zu wissen
 
 - Fortschritt, Serie, Filter und gelesene Meldungen liegen lokal auf dem Gerät.

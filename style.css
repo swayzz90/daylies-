@@ -28,6 +28,12 @@
 }
 
 html { background: var(--bg); }
+html, body { height: 100%; overflow: hidden; }
+
+/* Die Seite scrollt in einem eigenen Container, damit keine Scroll-Leiste erscheint */
+#scroller { position: fixed; inset: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; }
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }

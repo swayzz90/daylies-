@@ -13,6 +13,7 @@ const store = {
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const scroller = $("#scroller");
 const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
@@ -24,7 +25,7 @@ if (!views[currentTab]) currentTab = "news";
 let lastY = 0;
 
 function showTab(tab) {
-  scrollPos[currentTab] = window.scrollY;
+  scrollPos[currentTab] = scroller.scrollTop;
   currentTab = tab;
   store.set("tab", tab);
   for (const [name, el] of Object.entries(views)) el.hidden = name !== tab;
@@ -32,14 +33,14 @@ function showTab(tab) {
     if (b.dataset.tab === tab) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
-  window.scrollTo(0, scrollPos[tab] || 0);
+  scroller.scrollTo(0, scrollPos[tab] || 0);
   lastY = scrollPos[tab] || 0;
   document.querySelectorAll(".news-tools").forEach((t) => t.classList.remove("hide"));
   if (tab === "learn") renderLearn();
 }
 document.querySelectorAll(".tabbar button").forEach((b) =>
   b.addEventListener("click", () => {
-    if (b.dataset.tab === currentTab) window.scrollTo({ top: 0, behavior: "smooth" });
+    if (b.dataset.tab === currentTab) scroller.scrollTo({ top: 0, behavior: "smooth" });
     else showTab(b.dataset.tab);
   })
 );
@@ -180,7 +181,7 @@ function renderFeed(section) {
   list.innerHTML = html;
   if (pendingScroll && pendingScroll.tab === section && currentTab === section) {
     const y = pendingScroll.y; pendingScroll = null;
-    requestAnimationFrame(() => { lastY = y; window.scrollTo(0, y); });
+    requestAnimationFrame(() => { lastY = y; scroller.scrollTo(0, y); });
   }
 }
 
@@ -192,7 +193,7 @@ if (savedScroll && savedScroll.tab === currentTab && Date.now() - savedScroll.t 
 }
 const saveScroll = () => {
   if ((currentTab === "news" || currentTab === "lesen") && $("#quiz").hidden) {
-    store.set("scroll", { y: window.scrollY, t: Date.now(), tab: currentTab });
+    store.set("scroll", { y: scroller.scrollTop, t: Date.now(), tab: currentTab });
   }
 };
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") saveScroll(); });
@@ -258,8 +259,8 @@ let searchTimer;
 );
 
 /* Filterleiste: beim Runterscrollen ausblenden, beim Hochscrollen wieder zeigen */
-window.addEventListener("scroll", () => {
-  const y = window.scrollY;
+scroller.addEventListener("scroll", () => {
+  const y = scroller.scrollTop;
   const hide = y > 160 && y > lastY + 4;
   const show = y < lastY - 4 || y <= 160;
   if (hide || show) document.querySelectorAll(".news-tools").forEach((t) => t.classList.toggle("hide", hide));
@@ -271,7 +272,7 @@ window.addEventListener("scroll", () => {
   const pull = $("#pull");
   let startY = null, dist = 0;
   window.addEventListener("touchstart", (e) => {
-    if ((currentTab !== "news" && currentTab !== "lesen") || window.scrollY > 0 || !$("#quiz").hidden) return;
+    if ((currentTab !== "news" && currentTab !== "lesen") || scroller.scrollTop > 0 || !$("#quiz").hidden) return;
     startY = e.touches[0].clientY; dist = 0; pull.classList.add("dragging");
   }, { passive: true });
   window.addEventListener("touchmove", (e) => {
@@ -1244,6 +1245,57 @@ function renderResult() {
   $("#done").addEventListener("click", closeQuiz);
   $("#again")?.addEventListener("click", () => startQuiz(mode));
 }
+
+/* ---------- Zurück wischen: vom linken Rand nach rechts ---------- */
+const TAB_ORDER = ["news", "lesen", "learn"];
+function goBack() {
+  if (!$("#sheet").hidden) { sheetBack(); return true; }      // Profil oder Album
+  if (!$("#quiz").hidden) { closeQuiz(); return true; }        // Spiel
+  const i = TAB_ORDER.indexOf(currentTab);
+  if (i > 0) { showTab(TAB_ORDER[i - 1]); return true; }       // ein Reiter zurück
+  return false;
+}
+(() => {
+  const EDGE = 24, TRIGGER = 90;
+  let sx = 0, sy = 0, dx = 0, t0 = 0, tracking = false, active = false, el = null;
+  const topOverlay = () => (!$("#sheet").hidden ? $("#sheet") : !$("#quiz").hidden ? $("#quiz") : null);
+  window.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1 || e.touches[0].clientX > EDGE) return;
+    const t = e.touches[0];
+    tracking = true; active = false; sx = t.clientX; sy = t.clientY; dx = 0; t0 = Date.now(); el = topOverlay();
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (!tracking) return;
+    const t = e.touches[0];
+    dx = t.clientX - sx;
+    const dy = t.clientY - sy;
+    if (!active) {
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) { tracking = false; return; } // senkrecht: normales Scrollen
+      if (dx > 8) active = true; else return;
+    }
+    e.preventDefault();
+    if (el) { el.style.transition = "none"; el.style.transform = `translateX(${Math.max(0, dx)}px)`; }
+  }, { passive: false });
+  const end = () => {
+    if (!tracking) return;
+    tracking = false;
+    const fast = dx / Math.max(1, Date.now() - t0) > 0.6;
+    const go = active && (dx > TRIGGER || (fast && dx > 40));
+    const node = el;
+    el = null; active = false;
+    if (node) {
+      node.style.transition = "transform 0.2s ease";
+      node.style.transform = go ? "translateX(100%)" : "translateX(0)";
+      setTimeout(() => {
+        node.style.transition = "none"; node.style.transform = "";
+        if (go) goBack();
+        requestAnimationFrame(() => { node.style.transition = ""; });
+      }, 210);
+    } else if (go) goBack();
+  };
+  window.addEventListener("touchend", end);
+  window.addEventListener("touchcancel", end);
+})();
 
 /* ---------- Start ---------- */
 async function init() {
