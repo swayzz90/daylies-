@@ -38,6 +38,16 @@ jobs:
         run: node fetch-news.mjs
         env:
           PAYWALL_CACHE: ${{ runner.temp }}/paywall-cache.json
+      - name: Porträt-Cache laden
+        uses: actions/cache@v4
+        with:
+          path: portraits
+          key: portraits-${{ github.run_id }}
+          restore-keys: |
+            portraits-
+      - name: Porträts holen
+        run: node fetch-portraits.mjs
+        continue-on-error: true
       - name: Cache-Version setzen
         run: sed -i "s/__BUILD__/$(date +%s)/" sw.js
       - uses: actions/configure-pages@v5

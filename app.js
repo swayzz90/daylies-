@@ -305,6 +305,7 @@ let CONTENT = null;        // Ereignisse, Aussagen, Karten, Personen (content.js
 let MAPD = null;           // Weltkarte (map.json)
 let MAP_MARKUP = "";
 const PEOPLE = {};         // id -> Person
+let PORTRAITS = {};        // id -> { file, artist, license, page, v } (portraits/portraits.json)
 const CARD = {};           // id -> Karte
 const MAPIDX = {};         // Länderkürzel -> { s: größte Kantenlänge }
 const REGIONS = ["Alle", "Europa", "Asien", "Afrika", "Amerika", "Ozeanien"];
@@ -313,7 +314,10 @@ let region = store.get("region", "Alle");
 const THIS_YEAR = new Date().getFullYear();
 const fmtYear = (y) => (y < 0 ? `${-y} v. Chr.` : String(y));
 const lifeSpan = (p) => `${p.approx ? "um " : ""}${fmtYear(p.b)} bis ${fmtYear(p.d)}`;
-const initials = (name) => name.replace(/ (Jr\.|der Große|II\.|VII\.)/g, "").split(" ").filter((w) => /^[A-ZÄÖÜ]/.test(w)).slice(0, 2).map((w) => w[0]).join("");
+const initials = (name) => {
+  const w = name.replace(/ (Jr\.|der Große|II\.|VII\.)/g, "").split(" ").filter((x) => /^[A-ZÄÖÜ]/.test(x));
+  return w.length > 1 ? w[0][0] + w[w.length - 1][0] : (w[0] || "?")[0];
+};
 const nameOf = (id) => countries.find((c) => c.id === id)?.name || "";
 const ERA_LABEL = { antike: "Antike", mittelalter: "Mittelalter und Renaissance", neuzeit: "Frühe Neuzeit", j19: "19. Jahrhundert", j20: "20. Jahrhundert" };
 const PTOPIC_LABEL = { politik: "Politik und Geschichte", wissen: "Wissenschaft und Technik", wirtschaft: "Wirtschaft", kultur: "Kultur und Philosophie" };
@@ -375,8 +379,10 @@ const GAMES = [
     pick: () => shuffle(CONTENT.events).slice(0, 10) },
   { id: "timeline", kind: "timeline", title: "Zeitstrahl", sub: "Fünf Ereignisse ordnen", icon: "📜", short: "Zeitstrahl", know: true,
     pick: () => pickSets(5) },
-  { id: "who", kind: "who", title: "Wer war das?", sub: "Hinweise lesen, Person erraten", icon: "👤", sr: true, scored: true, short: "Wer war das?", know: true,
-    pick: () => pickFrom("who", CONTENT.people) },
+  { id: "who", kind: "who", title: "Die Akte", sub: "Foto enthüllen, Person erraten", icon: "🕵️", sr: true, scored: true, short: "Die Akte", know: true,
+    pick: () => pickWho() },
+  { id: "face", kind: "face", title: "Gesichter", sub: "Porträt sehen, Person wählen", icon: "🖼️", sr: true, short: "Gesichter", know: true,
+    avail: () => hasPhotos(), pick: () => pickFrom("face", CONTENT.people.filter((p) => photoUrl(p.id))) },
 ];
 const DECK = { id: "cards", kind: "deck", title: "Tagesstapel", sr: true, noAgain: true, short: "Tagesstapel" };
 const gameById = (id) => GAMES.find((g) => g.id === id);
@@ -485,6 +491,7 @@ function gameStats(g) {
   if (g.kind === "country" || g.kind === "map") list = pool(g);
   else if (g.id === "tf") list = CONTENT?.facts;
   else if (g.id === "who") list = CONTENT?.people;
+  else if (g.id === "face") list = CONTENT?.people.filter((p) => photoUrl(p.id));
   if (list) {
     const mastered = list.filter((x) => (rec(g.id, x.id)?.box ?? 0) >= MASTERED).length;
     const due = list.filter((x) => { const r = rec(g.id, x.id); return r && r.box < 5 && r.due <= now; }).length;
@@ -534,10 +541,10 @@ function renderLearn() {
       sub: done ? "Heute geschafft. Morgen kommen 10 neue Karten." : `${d.pos} von ${d.ids.length} Karten heute${d.reviews ? `, ${d.reviews} Wiederholungen dabei` : ""}`,
       pct: Math.round((d.pos / d.ids.length) * 100),
     });
-    know.innerHTML = GAMES.filter((g) => g.know).map(gameRow).join("");
+    know.innerHTML = GAMES.filter((g) => g.know && (!g.avail || g.avail())).map(gameRow).join("");
     const found = discovered().length;
     $("#atlas-row").innerHTML = row({
-      attr: 'data-open="atlas"', icon: "🧭", title: "Personen-Atlas",
+      attr: 'data-open="atlas"', icon: "🧭", title: "Personen-Album",
       sub: `${found} von ${CONTENT.people.length} Personen entdeckt`, pct: Math.round((found / CONTENT.people.length) * 100),
     });
   } else {
@@ -591,13 +598,15 @@ function startQuiz(game) {
   const questions = game.pick();
   if (!questions.length) return;
   quiz = { mode: game, questions, i: 0, results: [], points: 0 };
+  if (game.kind === "who") preloadPhotos(questions.map((q) => q.p));
+  else if (game.kind === "face") preloadPhotos(questions);
   showQuiz();
   renderModeSwitcher();
   renderQuestion();
 }
 
 function renderModeSwitcher() {
-  const avail = GAMES.filter((g) => (g.know ? !!CONTENT : g.kind === "map" ? !!MAPD : true));
+  const avail = GAMES.filter((g) => (g.know ? !!CONTENT : g.kind === "map" ? !!MAPD : true) && (!g.avail || g.avail()));
   $("#quiz-modes").innerHTML = avail.map((g) =>
     `<button role="radio" aria-checked="${g.id === quiz.mode.id}" data-mode="${g.id}">${g.short}</button>`).join("");
   const box = $("#quiz-modes"), act = box.querySelector('[aria-checked="true"]');
@@ -630,7 +639,8 @@ function renderDots() {
 
 const RENDER = {
   country: (t) => renderCountry(t), map: (t) => renderMap(t), tf: (t) => renderTF(t), before: (t) => renderBefore(t),
-  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), who: (t) => renderWho(t), deck: (t) => renderDeck(t),
+  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), deck: (t) => renderDeck(t), face: (t) => renderFace(t),
+  who: (t) => (t.mode === "learn" ? renderLearnCard(t) : renderAkte(t)),
 };
 function renderQuestion() {
   renderDots();
@@ -849,60 +859,216 @@ function renderTimeline(set) {
   $("#undo").addEventListener("click", () => { if (!finished) { order.pop(); draw(); } });
 }
 
-/* ---------- Wer war das? ---------- */
+/* ---------- Die Akte (früher „Wer war das?“) ---------- */
 const discovered = () => store.get("people", []);
 function discover(id) {
   const list = discovered();
   if (!list.includes(id)) { list.push(id); store.set("people", list); }
 }
 
-function whoOptions(p) {
-  const others = CONTENT.people.filter((x) => x.id !== p.id);
-  const same = shuffle(others.filter((x) => x.topic === p.topic));
-  const near = shuffle(others.filter((x) => x.era === p.era && !same.includes(x)));
-  const rest = shuffle(others.filter((x) => !same.includes(x) && !near.includes(x)));
-  return shuffle([p, ...[...same.slice(0, 2), ...near, ...rest].slice(0, 3)]);
+const PHOTO_MIN = 8; // erst ab so vielen Porträts werden Foto-Spiele angeboten
+const hasPhotos = () => Object.keys(PORTRAITS).length >= PHOTO_MIN;
+const photoUrl = (id) => { const r = PORTRAITS[id]; return r ? `${r.file}?v=${r.v}` : null; };
+function preloadPhotos(people) { people.forEach((p) => { const u = photoUrl(p.id); if (u) new Image().src = u; }); }
+
+const SILHOUETTE = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c.8-4 3.8-6 7.5-6s6.7 2 7.5 6"/></svg>';
+
+// Runder oder quadratischer Ausschnitt (Initialen, solange kein Foto da ist)
+function avatar(p, cls = "") {
+  const u = photoUrl(p.id);
+  return `<span class="avatar ${cls}" aria-hidden="true">${u ? `<img src="${esc(u)}" alt="" loading="lazy" onerror="this.remove()">` : ""}<span class="ini">${esc(initials(p.name))}</span></span>`;
 }
 
-function renderWho(p) {
-  const opts = whoOptions(p);
-  let shown = 1, done = false;
+// Großes Porträt; bei blur > 0 ist es verschwommen (Akte), Silhouette wenn kein Foto vorhanden ist
+function portraitHTML(p, { blur = 0, stamp = "", id = "", big = false } = {}) {
+  const u = photoUrl(p.id);
+  return `<div class="portrait${u ? "" : " nophoto"}${big ? " big" : ""}"${id ? ` id="${id}"` : ""}>
+    ${u ? `<img src="${esc(u)}" alt="" style="--blur:${blur}px" onerror="this.parentNode.classList.add('nophoto');this.remove()">` : ""}
+    <span class="silhouette">${SILHOUETTE}</span>${stamp ? `<span class="stamp">${esc(stamp)}</span>` : ""}</div>`;
+}
+
+function lifeBar(p) {
+  const min = -800, max = THIS_YEAR, span = max - min;
+  const pct = (y) => ((Math.max(min, Math.min(max, y)) - min) / span) * 100;
+  const left = pct(p.b), width = Math.max(1.5, pct(p.d) - pct(p.b));
+  const tick = (y, label) => `<span style="left:${pct(y)}%">${label}</span>`;
+  return `<div class="lifebar" role="img" aria-label="Lebenszeit ${esc(lifeSpan(p))}">
+    <div class="track"><i style="left:${left}%;width:${width}%"></i></div>
+    <div class="ticks">${tick(-800, "800 v. Chr.")}${tick(0, "0")}${tick(1000, "1000")}${tick(max, "heute")}</div></div>`;
+}
+
+function steckbriefHTML(p) {
+  return `<h2 class="profile-name">${esc(p.name)}</h2>
+    <p class="profile-meta">${esc(p.role)}<br>${lifeSpan(p)}</p>
+    ${lifeBar(p)}
+    <p class="profile-tags"><span class="cat">${ERA_LABEL[p.era]}</span><span class="cat">${PTOPIC_LABEL[p.topic]}</span></p>
+    <h3>Kurz erklärt</h3><p>${esc(p.short)}</p>
+    <h3>Hintergrund</h3><p>${esc(p.bg)}</p>`;
+}
+
+/* Schwierigkeit passt sich automatisch an den Lernstand (Kasten) an */
+const AKTE_FIELDS = [
+  { key: "era", label: "Epoche", val: (p) => ERA_LABEL[p.era] },
+  { key: "country", label: "Land", val: (p) => p.country },
+  { key: "life", label: "Lebensdaten", val: (p) => lifeSpan(p) },
+  { key: "role", label: "Beruf", val: (p) => p.role },
+  { key: "known", label: "Bekannt für", val: (p) => p.known },
+  { key: "hint", label: "Persönlicher Hinweis", val: (p) => p.hints[2] },
+];
+const AKTE_LEVELS = {
+  1: { label: "Einfach", blur: 10, open: ["era", "country"], dist: "far" },
+  2: { label: "Mittel", blur: 16, open: ["era"], dist: "topic" },
+  3: { label: "Schwer", blur: 22, open: [], dist: "near" },
+};
+function whoLevel(p) {
+  const r = rec("who", p.id);
+  if (!r) return 1;
+  return r.box <= 1 ? 1 : r.box <= 3 ? 2 : 3;
+}
+
+// Neue Personen lernt man zuerst kennen (Steckbrief, dann Mini-Check), höchstens drei pro Runde. Der Rest kommt als Akte.
+function pickWho(n = 10) {
+  const picked = pickFrom("who", CONTENT.people, n);
+  let learn = 0;
+  return picked.map((p) => {
+    if (!rec("who", p.id) && learn < 3) { learn++; return { p, mode: "learn" }; }
+    return { p, mode: "akte", level: whoLevel(p) };
+  });
+}
+
+function whoOptions(p, dist = "topic") {
+  const others = CONTENT.people.filter((x) => x.id !== p.id);
+  let pool;
+  if (dist === "far") pool = others.filter((x) => x.topic !== p.topic && x.era !== p.era);
+  else if (dist === "near") pool = others.filter((x) => x.topic === p.topic).sort((a, b) => Math.abs(a.b - p.b) - Math.abs(b.b - p.b)).slice(0, 8);
+  else pool = others.filter((x) => x.topic === p.topic);
+  const rest = others.filter((x) => !pool.includes(x));
+  return shuffle([p, ...[...shuffle(pool), ...shuffle(rest)].slice(0, 3)]);
+}
+
+// Ergebnis festhalten, ohne automatisch weiterzuschalten
+function record({ correct, show, pts = 0 }) {
+  quiz.results[quiz.i] = { correct, show, pts };
+  quiz.points += pts;
+  renderDots();
+}
+
+// Mini-Check: eine Frage zur Leistung der Person
+function renderMiniCheck(p, onAnswer) {
+  const opts = shuffle(p.qa.o.map((t, i) => ({ t, ok: i === 0 })));
   $("#quiz-body").innerHTML = `
-    <div class="prompt"><p class="prompt-label">Wer war das?</p>
-      <ol class="hints" id="hints"></ol>
-      <button class="btn ghost small" id="more" type="button">Nächster Hinweis</button>
+    <div class="mini-head">${avatar(p, "sm")}<span><strong>${esc(p.name)}</strong><span class="muted">Mini-Check</span></span></div>
+    <div class="prompt tight"><h2 class="prompt-statement">${esc(p.qa.q)}</h2></div>
+    <div class="answers">${opts.map((o, i) => `<button class="answer" data-i="${i}">${esc(o.t)}</button>`).join("")}</div>
+    ${FEEDBACK}`;
+  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
+    const correct = opts[Number(btn.dataset.i)].ok;
+    $("#quiz-body").querySelectorAll(".answer").forEach((b, i) => { b.disabled = true; if (opts[i].ok) b.classList.add("correct"); });
+    if (!correct) btn.classList.add("wrong");
+    onAnswer(correct);
+    $("#feedback").innerHTML = `<p>${correct ? "Richtig." : `Richtig wäre <strong>${esc(p.qa.o[0])}</strong>`}</p><button class="btn" id="next">Weiter</button>`;
+    $("#next").addEventListener("click", next);
+  }, { once: true }));
+}
+
+// Neue Person: erst kennenlernen, dann Mini-Check
+function renderLearnCard({ p }) {
+  discover(p.id);
+  $("#quiz-body").innerHTML = `
+    <div class="profile learn">
+      ${portraitHTML(p, { stamp: "Neu", big: true })}
+      ${steckbriefHTML(p)}
     </div>
+    <div class="card-actions"><button class="btn wide" id="to-check" type="button">Weiter zum Mini-Check</button></div>`;
+  $("#to-check").addEventListener("click", () => renderMiniCheck(p, (correct) => {
+    saveRec("who", p.id, correct);
+    record({ correct, pts: correct ? 3 : 0, show: { icon: initials(p.name), title: p.name, sub: "neu kennengelernt" } });
+  }));
+}
+
+// Bekannte Person: Akte mit geschwärzten Feldern, das Foto wird mit jedem aufgedeckten Feld schärfer
+function renderAkte({ p, level }) {
+  const L = AKTE_LEVELS[level];
+  const opts = whoOptions(p, L.dist);
+  const open = new Set(L.open);
+  const wasUnseen = !rec("who", p.id);
+  let paid = 0, wrong = 0, done = false;
+  $("#quiz-body").innerHTML = `
+    <div class="akte">
+      ${portraitHTML(p, { blur: L.blur, stamp: L.label, id: "akte-portrait" })}
+      <div class="akte-side">
+        <p class="akte-name" id="akte-name">Unbekannte Person</p>
+        <p class="muted akte-rule">Jedes aufgedeckte Feld kostet einen Punkt. Ein falscher Tipp deckt ein Feld auf, beim zweiten ist der Fall verloren.</p>
+      </div>
+    </div>
+    <div class="fields" id="fields"></div>
     <div class="answers" id="who-opts">${opts.map((o) => `<button class="answer" data-id="${o.id}">${esc(o.name)}</button>`).join("")}</div>
     ${FEEDBACK}`;
-  const drawHints = () => {
-    $("#hints").innerHTML = p.hints.slice(0, shown).map((h, i) => `<li><b>Hinweis ${i + 1}</b>${esc(h)}</li>`).join("");
-    $("#more").hidden = shown >= p.hints.length || done;
+  const portrait = $("#akte-portrait");
+  portrait.classList.add("hidden");
+  const img = portrait.querySelector("img");
+  const paintBlur = () => img?.style.setProperty("--blur", `${Math.max(0, L.blur * (1 - paid / 4))}px`);
+  const draw = () => {
+    $("#fields").innerHTML = AKTE_FIELDS.map((f) => open.has(f.key)
+      ? `<div class="field open"><span class="f-label">${f.label}</span><span class="f-val">${esc(f.val(p))}</span></div>`
+      : `<button class="field locked" data-key="${f.key}" type="button"><span class="f-label">${f.label}</span><span class="f-val redact">▮▮▮▮▮▮▮▮▮▮</span><span class="f-cost">−1</span></button>`).join("");
   };
-  drawHints();
-  $("#more").addEventListener("click", () => { if (!done && shown < p.hints.length) { shown++; drawHints(); } });
+  const reveal = (key) => { if (done || open.has(key)) return; open.add(key); paid++; draw(); paintBlur(); };
+  draw();
+  $("#fields").addEventListener("click", (e) => { const b = e.target.closest(".field.locked"); if (b) reveal(b.dataset.key); });
+
   const finish = (correct) => {
     done = true;
-    $("#more").hidden = true;
-    $("#who-opts").querySelectorAll(".answer").forEach((b) => { b.disabled = true; if (b.dataset.id === p.id) b.classList.add("correct"); });
-    const pts = correct ? Math.max(1, 5 - shown) : 0;
-    saveRec("who", p.id, correct && shown <= 3);
+    $("#who-opts").querySelectorAll(".answer").forEach((x) => { x.disabled = true; if (x.dataset.id === p.id) x.classList.add("correct"); });
+    portrait.classList.remove("hidden");
+    img?.style.setProperty("--blur", "0px");
+    const pts = correct ? Math.max(1, 5 - paid) + (level - 1) : 0;
+    saveRec("who", p.id, correct && paid <= 3);
     discover(p.id);
-    settle({
-      correct, auto: false, pts,
-      show: { icon: initials(p.name), title: p.name, sub: correct ? `${shown} Hinweis${shown > 1 ? "e" : ""} gebraucht` : "nicht erkannt" },
-      feedback: `<p><strong>${esc(p.name)}</strong><br>${lifeSpan(p)} · ${correct ? `${pts} Punkte` : "leider nicht erkannt"}</p>
-        <button class="btn ghost" id="open-profile" type="button">Profil</button>`,
-      after: () => $("#open-profile").addEventListener("click", () => openProfile(p.id)),
-    });
+    record({ correct, pts, show: { icon: initials(p.name), title: p.name, sub: correct ? `${paid} Feld${paid === 1 ? "" : "er"} aufgedeckt` : "nicht erkannt" } });
+    const needsCheck = !correct || wasUnseen;
+    $("#akte-name").textContent = p.name;
+    $(".akte-rule").textContent = `${p.role} · ${lifeSpan(p)}`;
+    $("#fields").innerHTML = `${lifeBar(p)}<p class="sol-short">${esc(p.short)}</p>`;
+    $("#who-opts").hidden = true;
+    $("#feedback").innerHTML = `<p><strong>${correct ? `${pts} Punkte` : "Fall verloren"}</strong><br><span class="muted">${correct ? "Gelöst" : "Die Person war"} ${esc(p.name)}</span></p>
+      <button class="btn ghost" id="open-profile" type="button">Profil</button>
+      <button class="btn" id="to-check" type="button">${needsCheck ? "Mini-Check" : "Weiter"}</button>`;
+    $("#open-profile").addEventListener("click", () => openProfile(p.id));
+    $("#to-check").addEventListener("click", () => (needsCheck ? renderMiniCheck(p, () => {}) : next()));
   };
   $("#who-opts").addEventListener("click", (e) => {
     const b = e.target.closest(".answer");
     if (!b || done || b.disabled) return;
     if (b.dataset.id === p.id) return finish(true);
     b.classList.add("wrong"); b.disabled = true;
-    if (shown < p.hints.length) { shown++; drawHints(); }
-    else finish(false);
+    wrong++;
+    if (wrong >= 2) return finish(false);
+    const nextField = AKTE_FIELDS.find((f) => !open.has(f.key));
+    if (nextField) reveal(nextField.key);
   });
+}
+
+/* ---------- Gesichter: Porträt sehen, Person wählen ---------- */
+function renderFace(p) {
+  const opts = whoOptions(p, "topic");
+  $("#quiz-body").innerHTML = `
+    <div class="prompt tight"><p class="prompt-label">Wer ist das?</p></div>
+    ${portraitHTML(p, { big: true })}
+    <div class="answers">${opts.map((o) => `<button class="answer" data-id="${o.id}">${esc(o.name)}</button>`).join("")}</div>
+    ${FEEDBACK}`;
+  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
+    const correct = btn.dataset.id === p.id;
+    $("#quiz-body").querySelectorAll(".answer").forEach((b) => { b.disabled = true; if (b.dataset.id === p.id) b.classList.add("correct"); });
+    if (!correct) btn.classList.add("wrong");
+    saveRec("face", p.id, correct);
+    discover(p.id);
+    settle({
+      correct,
+      show: { icon: initials(p.name), title: p.name, sub: lifeSpan(p) },
+      feedback: correct ? "" : `<p>Das war <strong>${esc(p.name)}</strong><br><span class="muted">${esc(p.role)}</span></p>`,
+    });
+  }, { once: true }));
 }
 
 /* ---------- Profile und Atlas (Overlay) ---------- */
@@ -929,43 +1095,43 @@ function profileView(id) {
   discover(id);
   $("#sheet-title").textContent = "Profil";
   const rel = p.rel.map((r) => PEOPLE[r]).filter(Boolean);
+  const ph = PORTRAITS[id];
   $("#sheet-body").innerHTML = `
     <div class="profile">
-      <div class="avatar" aria-hidden="true">${esc(initials(p.name))}</div>
-      <h2 class="profile-name">${esc(p.name)}</h2>
-      <p class="profile-meta">${esc(p.role)}<br>${lifeSpan(p)}</p>
-      <p class="profile-tags"><span class="cat">${ERA_LABEL[p.era]}</span><span class="cat">${PTOPIC_LABEL[p.topic]}</span></p>
-      <h3>Kurz erklärt</h3><p>${esc(p.short)}</p>
-      <h3>Hintergrund</h3><p>${esc(p.bg)}</p>
+      ${portraitHTML(p, { big: true })}
+      ${steckbriefHTML(p)}
+      ${ph ? `<p class="credit">Foto: ${esc(ph.artist)}, ${esc(ph.license)}, <a href="${esc(ph.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></p>` : ""}
       <h3>Weiter entdecken</h3>
-      <div class="rabbit">${rel.map((r) => `<button class="atlas-row" data-id="${r.id}"><span class="avatar sm" aria-hidden="true">${esc(initials(r.name))}</span><span><strong>${esc(r.name)}</strong><span class="muted">${lifeSpan(r)}</span></span></button>`).join("")}</div>
+      <div class="rabbit">${rel.map((r) => `<button class="atlas-row" data-id="${r.id}">${avatar(r, "sm")}<span><strong>${esc(r.name)}</strong><span class="muted">${lifeSpan(r)}</span></span></button>`).join("")}</div>
       <a class="btn ghost wide wiki" href="https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(p.name)}" target="_blank" rel="noopener">Bei Wikipedia lesen</a>
     </div>`;
   $("#sheet-body").querySelectorAll(".rabbit .atlas-row").forEach((b) => b.addEventListener("click", () => openProfile(b.dataset.id)));
 }
 
+// Personen-Album: Porträts pro Epoche oder Thema, unbekannte Personen bleiben ein Fragezeichen
 let atlasBy = "era";
 function atlasView() {
-  $("#sheet-title").textContent = "Personen-Atlas";
+  $("#sheet-title").textContent = "Personen-Album";
   const seen = new Set(discovered());
   const all = CONTENT.people;
   const groups = atlasBy === "era"
     ? Object.entries(ERA_LABEL).map(([k, label]) => [label, all.filter((p) => p.era === k)])
     : Object.entries(PTOPIC_LABEL).map(([k, label]) => [label, all.filter((p) => p.topic === k)]);
   $("#sheet-body").innerHTML = `
-    <p class="page-sub">${seen.size} von ${all.length} Personen entdeckt. Neue Personen findest du im Spiel „Wer war das?“.</p>
+    <p class="page-sub">${seen.size} von ${all.length} Personen entdeckt. Neue Personen findest du in „Die Akte“ und bei den Gesichtern.</p>
     <div class="segmented two" role="tablist" aria-label="Sortierung">
       <button role="tab" data-by="era" aria-selected="${atlasBy === "era"}">Nach Epoche</button>
       <button role="tab" data-by="topic" aria-selected="${atlasBy === "topic"}">Nach Thema</button>
     </div>
     ${groups.map(([label, list]) => {
       const sorted = list.slice().sort((a, b) => a.b - b.b);
-      const mine = sorted.filter((p) => seen.has(p.id));
-      return `<h3 class="atlas-group">${label} <span class="muted">${mine.length}/${list.length}</span></h3>
-        ${mine.map((p) => `<button class="atlas-row" data-id="${p.id}"><span class="avatar sm" aria-hidden="true">${esc(initials(p.name))}</span><span><strong>${esc(p.name)}</strong><span class="muted">${lifeSpan(p)}</span></span></button>`).join("")}
-        ${list.length > mine.length ? `<p class="muted atlas-locked">${list.length - mine.length} noch unbekannt</p>` : ""}`;
+      const mine = sorted.filter((p) => seen.has(p.id)).length;
+      return `<h3 class="atlas-group">${label} <span class="muted">${mine}/${list.length}</span></h3>
+        <div class="grid">${sorted.map((p) => seen.has(p.id)
+          ? `<button class="tile" data-id="${p.id}">${avatar(p, "sq")}<span class="t-name">${esc(p.name)}</span></button>`
+          : `<div class="tile locked" aria-label="noch unbekannt"><span class="avatar sq"><span class="ini">?</span></span><span class="t-name">???</span></div>`).join("")}</div>`;
     }).join("")}`;
-  $("#sheet-body").querySelectorAll(".atlas-row").forEach((b) => b.addEventListener("click", () => openProfile(b.dataset.id)));
+  $("#sheet-body").querySelectorAll(".tile[data-id]").forEach((b) => b.addEventListener("click", () => openProfile(b.dataset.id)));
   $("#sheet-body").querySelectorAll("[data-by]").forEach((b) => b.addEventListener("click", () => { atlasBy = b.dataset.by; atlasView(); }));
 }
 
@@ -1094,6 +1260,9 @@ async function init() {
     CONTENT.people.forEach((p) => { PEOPLE[p.id] = p; });
     CONTENT.cards.forEach((c) => { CARD[c.id] = c; });
   } catch { CONTENT = null; }
+  try {
+    PORTRAITS = (await get("portraits/portraits.json")).items || {};
+  } catch { PORTRAITS = {}; }
   try {
     MAPD = await get("map.json");
     MAPD.countries.forEach((m) => { if (m.i) MAPIDX[m.i] = { s: Math.max(m.s, MAPIDX[m.i]?.s || 0) }; });

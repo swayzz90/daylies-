@@ -16,7 +16,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== "portraits-v1").map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -41,6 +41,21 @@ self.addEventListener("fetch", (e) => {
           .catch(() => { clearTimeout(timer); fromCache().then(resolve); });
       })
     );
+    return;
+  }
+
+  // Porträts: Bilder aus dem Cache, die Liste (portraits.json) zuerst vom Netz
+  if (url.pathname.includes("/portraits/")) {
+    e.respondWith(caches.open("portraits-v1").then(async (c) => {
+      const isIndex = url.pathname.endsWith("portraits.json");
+      const hit = await c.match(e.request);
+      if (hit && !isIndex) return hit;
+      try {
+        const res = await fetch(e.request);
+        if (res.ok) c.put(e.request, res.clone());
+        return res;
+      } catch { return hit || Response.error(); }
+    }));
     return;
   }
 
