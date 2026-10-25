@@ -7,14 +7,15 @@
   <meta name="description" content="Nachrichten und Allgemeinwissen statt Scrollen.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="color-scheme" content="dark">
   <meta name="apple-mobile-web-app-title" content="Daily Brain">
-  <meta name="theme-color" content="#E9EEEA" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0F1719" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#151A23">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="icon" href="icon-192.png">
   <link rel="preload" href="bricolage-grotesque-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <style>html,body{background:#151A23;color-scheme:dark}</style>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -40,7 +41,7 @@
         </label>
       </div>
 
-      <div id="news-list" class="news-list" aria-live="polite"></div>
+      <div id="news-list" class="news-list" aria-live="polite"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
     </section>
 
     <!-- Lernen -->
@@ -74,6 +75,7 @@
       <ol class="dots" id="quiz-dots" aria-label="Fortschritt"></ol>
       <span class="quiz-count" id="quiz-count"></span>
     </div>
+    <div class="chips quiz-modes" id="quiz-modes" role="radiogroup" aria-label="Spiel wechseln"></div>
     <div class="quiz-body" id="quiz-body"></div>
   </div>
 

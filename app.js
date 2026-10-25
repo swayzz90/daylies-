@@ -56,9 +56,10 @@ async function loadNews() {
     const res = await fetch("news.json?t=" + Date.now(), { cache: "no-store" });
     if (!res.ok) throw new Error(res.status);
     const data = await res.json();
+    news.loadedAt = Date.now();
+    if (data.updated && data.updated === news.updated && news.items.length) return; // nichts Neues: kein Neuaufbau
     news.items = data.items || [];
     news.updated = data.updated;
-    news.loadedAt = Date.now();
   } catch {
     if (!news.items.length) $("#news-sub").textContent = "Offline. Keine gespeicherten Meldungen.";
   }
@@ -125,11 +126,26 @@ function renderNews() {
       </a>`;
   }
   list.innerHTML = html;
+  if (pendingScroll !== null && currentTab === "news") {
+    const y = pendingScroll; pendingScroll = null;
+    requestAnimationFrame(() => window.scrollTo(0, y));
+  }
 }
+
+/* Scroll-Position merken, damit die Liste nach dem Zurückkehren nicht oben neu startet */
+let pendingScroll = null;
+const savedScroll = store.get("scroll", null);
+if (savedScroll && savedScroll.tab === "news" && Date.now() - savedScroll.t < 30 * 60 * 1000) pendingScroll = savedScroll.y;
+const saveScroll = () => {
+  if (currentTab === "news" && $("#quiz").hidden) store.set("scroll", { y: window.scrollY, t: Date.now(), tab: "news" });
+};
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") saveScroll(); });
+window.addEventListener("pagehide", saveScroll);
 
 $("#news-list").addEventListener("click", (e) => {
   const a = e.target.closest(".news-item");
   if (!a) return;
+  saveScroll();
   markRead(a.dataset.id);
   a.classList.add("read");
 });
@@ -323,17 +339,33 @@ $("#modes").addEventListener("click", (e) => {
 
 /* ---------- Quiz-Ablauf ---------- */
 let quiz = null;
+let nextTimer;
 
 function startQuiz(mode) {
+  clearTimeout(nextTimer);
   const questions = pickQuestions(mode);
   if (!questions.length) return;
   quiz = { mode, questions, i: 0, results: [] };
   $("#quiz").hidden = false;
   document.body.style.overflow = "hidden";
+  renderModeSwitcher();
   renderQuestion();
 }
 
+function renderModeSwitcher() {
+  $("#quiz-modes").innerHTML = MODES.map((m) =>
+    `<button role="radio" aria-checked="${m.id === quiz.mode.id}" data-mode="${m.id}">${m.title}</button>`).join("");
+  const box = $("#quiz-modes"), act = box.querySelector('[aria-checked="true"]');
+  box.scrollLeft = act.getBoundingClientRect().left - box.getBoundingClientRect().left + box.scrollLeft - (box.clientWidth - act.offsetWidth) / 2;
+}
+$("#quiz-modes").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b || !quiz || b.dataset.mode === quiz.mode.id) return;
+  startQuiz(MODES.find((m) => m.id === b.dataset.mode));
+});
+
 function closeQuiz() {
+  clearTimeout(nextTimer);
   $("#quiz").hidden = true;
   document.body.style.overflow = "";
   quiz = null;
@@ -392,7 +424,7 @@ function answer(btn, target, opts) {
 
   const fb = $("#feedback");
   if (correct) {
-    setTimeout(next, 650);
+    nextTimer = setTimeout(next, 650);
   } else {
     fb.innerHTML = `<p>Richtig wäre <strong>${esc(mode.answerText(target))}</strong></p>
       <button class="btn" id="next">Weiter</button>`;

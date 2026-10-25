@@ -25,16 +25,21 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
 
-  // Nachrichten: erst Netz, bei Offline den letzten Stand
+  // Nachrichten: erst Netz (max. 3,5 s), sonst letzter gespeicherter Stand
   if (url.pathname.endsWith("/news.json")) {
     e.respondWith(
-      fetch(e.request, { cache: "no-store" })
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put("news.json", copy));
-          return res;
-        })
-        .catch(() => caches.match("news.json"))
+      new Promise((resolve) => {
+        const fromCache = () => caches.match("news.json").then((r) => r || Response.error());
+        const timer = setTimeout(() => fromCache().then(resolve), 3500);
+        fetch(e.request, { cache: "no-store" })
+          .then((res) => {
+            clearTimeout(timer);
+            const copy = res.clone();
+            caches.open(VERSION).then((c) => c.put("news.json", copy));
+            resolve(res);
+          })
+          .catch(() => { clearTimeout(timer); fromCache().then(resolve); });
+      })
     );
     return;
   }
