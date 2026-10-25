@@ -1,0 +1,10 @@
+[
+  { "name": "tagesschau", "category": "deutschland", "url": "https://www.tagesschau.de/inland/index~rss2.xml", "enabled": true },
+  { "name": "tagesschau", "category": "welt", "url": "https://www.tagesschau.de/ausland/index~rss2.xml", "enabled": true },
+  { "name": "SPIEGEL", "category": "deutschland", "url": "https://www.spiegel.de/politik/deutschland/index.rss", "enabled": true },
+  { "name": "SPIEGEL", "category": "welt", "url": "https://www.spiegel.de/ausland/index.rss", "enabled": true },
+  { "name": "ZEIT", "category": "deutschland", "url": "https://newsfeed.zeit.de/politik/deutschland/index", "enabled": true },
+  { "name": "ZEIT", "category": "welt", "url": "https://newsfeed.zeit.de/politik/ausland/index", "enabled": true },
+  { "name": "DW", "category": "welt", "url": "https://rss.dw.com/xml/rss-de-all", "enabled": true },
+  { "name": "BBC", "category": "welt", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "enabled": false }
+]
