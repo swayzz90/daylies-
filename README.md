@@ -22,21 +22,21 @@ Nachrichten und Allgemeinwissen statt Scrollen. Eine Web-App (PWA) fürs iPhone,
 
 ## Wie es funktioniert
 
-- Die GitHub Action läuft stündlich, holt die Feeds aus `scripts/feeds.json`, schreibt `data/news.json` und veröffentlicht die Seite neu.
+- Die GitHub Action läuft stündlich, holt die Feeds aus `feeds.json`, schreibt `data/news.json` und veröffentlicht die Seite neu.
 - Fortschritt, Serie und gelesene Meldungen liegen lokal auf dem Gerät (localStorage). Wer Safari-Daten löscht, löscht auch den Fortschritt.
 - Die App funktioniert offline. Nachrichten zeigen dann den letzten geladenen Stand.
 
 ## Anpassen
 
-- **Quellen:** In `scripts/feeds.json` Feeds hinzufügen, entfernen oder mit `"enabled": false` abschalten. `category` ist `deutschland` oder `welt`.
+- **Quellen:** In `feeds.json` Feeds hinzufügen, entfernen oder mit `"enabled": false` abschalten. `category` ist `deutschland` oder `welt`.
 - **Aktualisierung:** In `.github/workflows/deploy.yml` die Zeile `cron`. GitHub startet geplante Läufe teils mit Verzögerung.
-- **Länder:** `data/countries.json` (194 Staaten, deutsche Namen und Hauptstädte). Israel ist aus den Hauptstadt-Spielen ausgenommen, weil die Hauptstadt international umstritten ist.
+- **Länder:** `countries.json` (194 Staaten, deutsche Namen und Hauptstädte). Israel ist aus den Hauptstadt-Spielen ausgenommen, weil die Hauptstadt international umstritten ist.
 
 ## Gut zu wissen
 
 - GitHub pausiert geplante Läufe, wenn im Repo 60 Tage lang nichts passiert. Dann reicht ein beliebiger Commit oder ein manueller Start.
 - Falls ein Feed ausfällt, laufen die anderen weiter. Welcher Feed gerade klemmt, steht im Log der Action.
-- Lokal testen: `python3 -m http.server` im Ordner starten und `http://localhost:8000` öffnen. Nachrichten holen: `node scripts/fetch-news.mjs` (Node 20+).
+- Lokal testen: `python3 -m http.server` im Ordner starten und `http://localhost:8000` öffnen. Nachrichten holen: `node fetch-news.mjs` (Node 20+).
 
 ## Nächste Ausbaustufen
 

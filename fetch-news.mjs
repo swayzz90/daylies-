@@ -1,15 +1,15 @@
-// Holt alle aktivierten RSS/Atom-Feeds und schreibt data/news.json.
+// Holt alle aktivierten RSS/Atom-Feeds und schreibt news.json.
 // Läuft in der GitHub Action, braucht keine Abhängigkeiten (Node 20+).
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = join(ROOT, "data", "news.json");
+const ROOT = dirname(fileURLToPath(import.meta.url));
+const OUT = join(ROOT, "news.json");
 const MAX_AGE_HOURS = 72;
 const MAX_ITEMS = 400;
 
-const feeds = JSON.parse(await readFile(join(ROOT, "scripts", "feeds.json"), "utf8"))
+const feeds = JSON.parse(await readFile(join(ROOT, "feeds.json"), "utf8"))
   .filter((f) => f.enabled !== false);
 
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };

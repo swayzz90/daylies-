@@ -53,7 +53,7 @@ function markRead(id) {
 
 async function loadNews() {
   try {
-    const res = await fetch("data/news.json?t=" + Date.now(), { cache: "no-store" });
+    const res = await fetch("news.json?t=" + Date.now(), { cache: "no-store" });
     if (!res.ok) throw new Error(res.status);
     const data = await res.json();
     news.items = data.items || [];
@@ -444,10 +444,10 @@ async function init() {
   showTab(currentTab);
   loadNews();
   try {
-    countries = await (await fetch("data/countries.json")).json();
+    countries = await (await fetch("countries.json")).json();
     renderLearn();
   } catch {
-    $("#modes").innerHTML = `<div class="empty"><strong>Länderdaten fehlen</strong>Die Datei data/countries.json konnte nicht geladen werden.</div>`;
+    $("#modes").innerHTML = `<div class="empty"><strong>Länderdaten fehlen</strong>Die Datei countries.json konnte nicht geladen werden.</div>`;
   }
   if ("serviceWorker" in navigator && location.protocol === "https:") {
     navigator.serviceWorker.register("sw.js").catch(() => {});

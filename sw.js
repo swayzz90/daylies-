@@ -2,11 +2,11 @@
 const VERSION = "db-__BUILD__";
 const SHELL = [
   "./", "index.html", "style.css", "app.js", "manifest.webmanifest",
-  "data/countries.json",
-  "fonts/bricolage-grotesque-latin-500-normal.woff2",
-  "fonts/bricolage-grotesque-latin-700-normal.woff2",
-  "fonts/bricolage-grotesque-latin-800-normal.woff2",
-  "icons/apple-touch-icon.png", "icons/icon-192.png",
+  "countries.json",
+  "bricolage-grotesque-latin-500-normal.woff2",
+  "bricolage-grotesque-latin-700-normal.woff2",
+  "bricolage-grotesque-latin-800-normal.woff2",
+  "apple-touch-icon.png", "icon-192.png",
 ];
 
 self.addEventListener("install", (e) => {
@@ -26,15 +26,15 @@ self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
 
   // Nachrichten: erst Netz, bei Offline den letzten Stand
-  if (url.pathname.endsWith("/data/news.json")) {
+  if (url.pathname.endsWith("/news.json")) {
     e.respondWith(
       fetch(e.request, { cache: "no-store" })
         .then((res) => {
           const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put("data/news.json", copy));
+          caches.open(VERSION).then((c) => c.put("news.json", copy));
           return res;
         })
-        .catch(() => caches.match("data/news.json"))
+        .catch(() => caches.match("news.json"))
     );
     return;
   }
