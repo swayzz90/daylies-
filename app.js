@@ -17,9 +17,11 @@ const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) {
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 /* ---------- Tabs ---------- */
-const views = { news: $("#view-news"), learn: $("#view-learn") };
-const scrollPos = { news: 0, learn: 0 };
+const views = { news: $("#view-news"), lesen: $("#view-lesen"), learn: $("#view-learn") };
+const scrollPos = { news: 0, lesen: 0, learn: 0 };
 let currentTab = store.get("tab", "news");
+if (!views[currentTab]) currentTab = "news";
+let lastY = 0;
 
 function showTab(tab) {
   scrollPos[currentTab] = window.scrollY;
@@ -31,6 +33,8 @@ function showTab(tab) {
     else b.removeAttribute("aria-current");
   });
   window.scrollTo(0, scrollPos[tab] || 0);
+  lastY = scrollPos[tab] || 0;
+  document.querySelectorAll(".news-tools").forEach((t) => t.classList.remove("hide"));
   if (tab === "learn") renderLearn();
 }
 document.querySelectorAll(".tabbar button").forEach((b) =>
@@ -41,10 +45,22 @@ document.querySelectorAll(".tabbar button").forEach((b) =>
 );
 
 /* =================================================================
-   NACHRICHTEN
+   NACHRICHTEN und LESEN
    ================================================================= */
-const news = { items: [], updated: null, cat: "alle", query: "", loadedAt: 0 };
+const news = { items: [], updated: null, loadedAt: 0, paywall: 0 };
 const readIds = new Set(store.get("read", []));
+
+const TOPICS = {
+  politik: "Politik", wirtschaft: "Wirtschaft", boerse: "Börse", technik: "Technik",
+  wissenschaft: "Wissenschaft", sport: "Sport", kultur: "Kultur",
+  psychologie: "Psychologie", geschichte: "Geschichte", gesellschaft: "Gesellschaft",
+};
+const savedFilters = store.get("filters", {});
+const feedUI = {
+  news: { list: "#news-list", topics: "#news-topics", region: savedFilters.region || "alle", topic: savedFilters.newsTopic || "alle", query: "" },
+  lesen: { list: "#lesen-list", topics: "#lesen-topics", topic: savedFilters.lesenTopic || "alle", query: "" },
+};
+const saveFilters = () => store.set("filters", { region: feedUI.news.region, newsTopic: feedUI.news.topic, lesenTopic: feedUI.lesen.topic });
 
 function markRead(id) {
   readIds.add(id);
@@ -58,12 +74,20 @@ async function loadNews() {
     const data = await res.json();
     news.loadedAt = Date.now();
     if (data.updated && data.updated === news.updated && news.items.length) return; // nichts Neues: kein Neuaufbau
-    news.items = data.items || [];
+    // ältere news.json ohne Bereich/Thema bleibt lesbar
+    news.items = (data.items || []).map((it) => ({
+      ...it,
+      section: it.section || "news",
+      region: it.region ?? it.category ?? "beide",
+      topic: it.topic || "politik",
+    }));
     news.updated = data.updated;
+    news.paywall = data.stats?.paywallRemoved || 0;
   } catch {
     if (!news.items.length) $("#news-sub").textContent = "Offline. Keine gespeicherten Meldungen.";
   }
-  renderNews();
+  renderFeed("news");
+  renderFeed("lesen");
 }
 
 function relTime(iso) {
@@ -84,28 +108,48 @@ function dayLabel(iso) {
   return d.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" });
 }
 
-function renderNews() {
-  const sub = $("#news-sub");
-  const dateText = new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" });
-  sub.textContent = news.updated
-    ? `${dateText}, aktualisiert um ${new Date(news.updated).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} Uhr`
-    : dateText;
+function renderFeed(section) {
+  const ui = feedUI[section];
+  const list = $(ui.list);
+  const box = $(ui.topics);
 
-  const q = news.query.trim().toLowerCase();
-  const items = news.items.filter((it) =>
-    (news.cat === "alle" || it.category === news.cat) &&
+  if (section === "news") {
+    const dateText = new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" });
+    const stand = news.updated
+      ? ` · Stand ${new Date(news.updated).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} Uhr`
+      : "";
+    const paid = news.paywall ? ` · ${news.paywall} Bezahlartikel ausgeblendet` : "";
+    $("#news-sub").textContent = dateText + stand + paid;
+  }
+
+  const all = news.items.filter((it) => it.section === section);
+  if (!all.length) {
+    box.innerHTML = "";
+    list.innerHTML = `<div class="empty"><strong>Noch keine Einträge</strong>
+      Die Daten kommen nach dem nächsten Lauf der GitHub Action. Starte sie unter Actions mit „Run workflow“.</div>`;
+    return;
+  }
+
+  // Region (nur Nachrichten) und Themen-Chips; Themen ohne Einträge werden ausgeblendet
+  const inRegion = all.filter((it) =>
+    section !== "news" || ui.region === "alle" || it.region === ui.region || it.region === "beide");
+  const counts = {};
+  inRegion.forEach((it) => { counts[it.topic] = (counts[it.topic] || 0) + 1; });
+  if (ui.topic !== "alle" && !counts[ui.topic]) ui.topic = "alle";
+  const keep = box.scrollLeft;
+  box.innerHTML = [["alle", "Alle"], ...Object.keys(TOPICS).filter((k) => counts[k]).map((k) => [k, TOPICS[k]])]
+    .map(([k, label]) => `<button role="radio" aria-checked="${k === ui.topic}" data-topic="${k}">${label}</button>`).join("");
+  box.scrollLeft = keep;
+
+  const q = ui.query.trim().toLowerCase();
+  const items = inRegion.filter((it) =>
+    (ui.topic === "alle" || it.topic === ui.topic) &&
     (!q || (it.title + " " + it.summary + " " + it.source).toLowerCase().includes(q))
   );
 
-  const list = $("#news-list");
-  if (!news.items.length) {
-    list.innerHTML = `<div class="empty"><strong>Noch keine Meldungen</strong>
-      Die Nachrichten kommen nach dem ersten Lauf der GitHub Action. Starte sie unter Actions mit „Run workflow“.</div>`;
-    return;
-  }
   if (!items.length) {
     list.innerHTML = `<div class="empty"><strong>Keine Treffer</strong>
-      Für „${esc(news.query)}“ gibt es gerade keine Meldung. Versuch einen anderen Begriff oder wechsle den Bereich.</div>`;
+      ${q ? `Für „${esc(ui.query)}“ gibt es gerade nichts.` : "In dieser Auswahl gibt es gerade nichts."} Versuch einen anderen Begriff oder Filter.</div>`;
     return;
   }
 
@@ -114,11 +158,12 @@ function renderNews() {
   for (const it of items) {
     const label = dayLabel(it.date);
     if (label !== lastDay) { html += `<h2 class="day-label">${esc(label)}</h2>`; lastDay = label; }
-    const cat = news.cat === "alle" ? `<span class="cat">${it.category === "welt" ? "Welt" : "Deutschland"}</span>` : "";
+    const chip = ui.topic === "alle" && TOPICS[it.topic] ? `<span class="cat">${TOPICS[it.topic]}</span>` : "";
+    const time = section === "news" ? `<span>${esc(relTime(it.date))}</span>` : "";
     html += `
       <a class="news-item${readIds.has(it.id) ? " read" : ""}" href="${esc(it.link)}" target="_blank" rel="noopener" data-id="${esc(it.id)}">
         <div>
-          <div class="news-meta"><span class="src">${esc(it.source)}</span><span>${esc(relTime(it.date))}</span>${cat}</div>
+          <div class="news-meta"><span class="src">${esc(it.source)}</span>${time}${chip}</div>
           <h3 class="news-title">${esc(it.title)}</h3>
           ${it.summary ? `<p class="news-summary">${esc(it.summary)}</p>` : ""}
         </div>
@@ -126,50 +171,83 @@ function renderNews() {
       </a>`;
   }
   list.innerHTML = html;
-  if (pendingScroll !== null && currentTab === "news") {
-    const y = pendingScroll; pendingScroll = null;
-    requestAnimationFrame(() => window.scrollTo(0, y));
+  if (pendingScroll && pendingScroll.tab === section && currentTab === section) {
+    const y = pendingScroll.y; pendingScroll = null;
+    requestAnimationFrame(() => { lastY = y; window.scrollTo(0, y); });
   }
 }
 
 /* Scroll-Position merken, damit die Liste nach dem Zurückkehren nicht oben neu startet */
 let pendingScroll = null;
 const savedScroll = store.get("scroll", null);
-if (savedScroll && savedScroll.tab === "news" && Date.now() - savedScroll.t < 30 * 60 * 1000) pendingScroll = savedScroll.y;
+if (savedScroll && savedScroll.tab === currentTab && Date.now() - savedScroll.t < 30 * 60 * 1000) {
+  pendingScroll = { tab: savedScroll.tab, y: savedScroll.y };
+}
 const saveScroll = () => {
-  if (currentTab === "news" && $("#quiz").hidden) store.set("scroll", { y: window.scrollY, t: Date.now(), tab: "news" });
+  if ((currentTab === "news" || currentTab === "lesen") && $("#quiz").hidden) {
+    store.set("scroll", { y: window.scrollY, t: Date.now(), tab: currentTab });
+  }
 };
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") saveScroll(); });
 window.addEventListener("pagehide", saveScroll);
 
-$("#news-list").addEventListener("click", (e) => {
-  const a = e.target.closest(".news-item");
-  if (!a) return;
-  saveScroll();
-  markRead(a.dataset.id);
-  a.classList.add("read");
-});
+document.querySelectorAll(".feed-list").forEach((list) =>
+  list.addEventListener("click", (e) => {
+    const a = e.target.closest(".news-item");
+    if (!a) return;
+    saveScroll();
+    markRead(a.dataset.id);
+    a.classList.add("read");
+  })
+);
 
+// Themen-Chips (Nachrichten und Lesen)
+document.querySelectorAll(".topics").forEach((box) =>
+  box.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    feedUI[box.dataset.section].topic = b.dataset.topic;
+    saveFilters();
+    renderFeed(box.dataset.section);
+  })
+);
+
+// Region (nur Nachrichten)
+const markRegion = () => document.querySelectorAll(".segmented button")
+  .forEach((x) => x.setAttribute("aria-selected", String(x.dataset.cat === feedUI.news.region)));
+markRegion();
 document.querySelectorAll(".segmented button").forEach((b) =>
   b.addEventListener("click", () => {
-    news.cat = b.dataset.cat;
-    document.querySelectorAll(".segmented button").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
-    renderNews();
+    feedUI.news.region = b.dataset.cat;
+    saveFilters();
+    markRegion();
+    renderFeed("news");
   })
 );
 
 let searchTimer;
-$("#news-search").addEventListener("input", (e) => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { news.query = e.target.value; renderNews(); }, 120);
-});
+[["news", "#news-search"], ["lesen", "#lesen-search"]].forEach(([section, sel]) =>
+  $(sel).addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { feedUI[section].query = e.target.value; renderFeed(section); }, 120);
+  })
+);
+
+/* Filterleiste: beim Runterscrollen ausblenden, beim Hochscrollen wieder zeigen */
+window.addEventListener("scroll", () => {
+  const y = window.scrollY;
+  const hide = y > 160 && y > lastY + 4;
+  const show = y < lastY - 4 || y <= 160;
+  if (hide || show) document.querySelectorAll(".news-tools").forEach((t) => t.classList.toggle("hide", hide));
+  lastY = y;
+}, { passive: true });
 
 /* Zum Aktualisieren ziehen */
 (() => {
   const pull = $("#pull");
   let startY = null, dist = 0;
   window.addEventListener("touchstart", (e) => {
-    if (currentTab !== "news" || window.scrollY > 0 || !$("#quiz").hidden) return;
+    if ((currentTab !== "news" && currentTab !== "lesen") || window.scrollY > 0 || !$("#quiz").hidden) return;
     startY = e.touches[0].clientY; dist = 0; pull.classList.add("dragging");
   }, { passive: true });
   window.addEventListener("touchmove", (e) => {

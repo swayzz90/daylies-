@@ -20,10 +20,10 @@
 </head>
 <body>
   <main id="app">
+    <div class="pull" id="pull" aria-hidden="true"><span>Zum Aktualisieren ziehen</span></div>
 
     <!-- Nachrichten -->
     <section class="view" id="view-news" aria-labelledby="news-title">
-      <div class="pull" id="pull" aria-hidden="true"><span>Zum Aktualisieren ziehen</span></div>
       <header class="page-head">
         <h1 id="news-title">Nachrichten</h1>
         <p class="page-sub" id="news-sub">Wird geladen</p>
@@ -35,13 +35,33 @@
           <button role="tab" data-cat="deutschland" aria-selected="false">Deutschland</button>
           <button role="tab" data-cat="welt" aria-selected="false">Welt</button>
         </div>
+        <div class="chips topics" id="news-topics" data-section="news" role="radiogroup" aria-label="Thema"></div>
         <label class="search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
           <input id="news-search" type="search" placeholder="Meldungen durchsuchen" autocomplete="off" enterkeyhint="search">
         </label>
       </div>
 
-      <div id="news-list" class="news-list" aria-live="polite"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      <div id="news-list" class="news-list feed-list" aria-live="polite"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+    </section>
+
+
+    <!-- Lesen -->
+    <section class="view" id="view-lesen" aria-labelledby="lesen-title" hidden>
+      <header class="page-head">
+        <h1 id="lesen-title">Lesen</h1>
+        <p class="page-sub" id="lesen-sub">Wissen zum Lesen und Weiterbilden</p>
+      </header>
+
+      <div class="news-tools">
+        <div class="chips topics" id="lesen-topics" data-section="lesen" role="radiogroup" aria-label="Thema"></div>
+        <label class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+          <input id="lesen-search" type="search" placeholder="Artikel durchsuchen" autocomplete="off" enterkeyhint="search">
+        </label>
+      </div>
+
+      <div id="lesen-list" class="news-list feed-list" aria-live="polite"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
     </section>
 
     <!-- Lernen -->
@@ -83,6 +103,10 @@
     <button data-tab="news" aria-current="page">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="13" height="15" rx="2"/><path d="M16.5 8.5h3a1 1 0 0 1 1 1v8a2 2 0 0 1-2 2h-2M7 9h6M7 12.5h6M7 16h4"/></svg>
       <span>Nachrichten</span>
+    </button>
+    <button data-tab="lesen">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z"/></svg>
+      <span>Lesen</span>
     </button>
     <button data-tab="learn">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.8" ry="8.5"/><path d="M3.5 12h17"/></svg>

@@ -27,8 +27,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Merker für Bezahlartikel laden
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/paywall-cache.json
+          key: paywall-${{ github.run_id }}
+          restore-keys: |
+            paywall-
       - name: RSS-Feeds abholen
         run: node fetch-news.mjs
+        env:
+          PAYWALL_CACHE: ${{ runner.temp }}/paywall-cache.json
       - name: Cache-Version setzen
         run: sed -i "s/__BUILD__/$(date +%s)/" sw.js
       - uses: actions/configure-pages@v5

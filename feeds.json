@@ -1,10 +1,50 @@
-[
-  { "name": "tagesschau", "category": "deutschland", "url": "https://www.tagesschau.de/inland/index~rss2.xml", "enabled": true },
-  { "name": "tagesschau", "category": "welt", "url": "https://www.tagesschau.de/ausland/index~rss2.xml", "enabled": true },
-  { "name": "SPIEGEL", "category": "deutschland", "url": "https://www.spiegel.de/politik/deutschland/index.rss", "enabled": true },
-  { "name": "SPIEGEL", "category": "welt", "url": "https://www.spiegel.de/ausland/index.rss", "enabled": true },
-  { "name": "ZEIT", "category": "deutschland", "url": "https://newsfeed.zeit.de/politik/deutschland/index", "enabled": true },
-  { "name": "ZEIT", "category": "welt", "url": "https://newsfeed.zeit.de/politik/ausland/index", "enabled": true },
-  { "name": "DW", "category": "welt", "url": "https://rss.dw.com/xml/rss-de-all", "enabled": true },
-  { "name": "BBC", "category": "welt", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "enabled": false }
-]
+{
+  "rulesets": {
+    "wissen": [
+      { "topic": "psychologie", "words": ["psycholog", "psyche", "psychisch", "psychother", "gehirn", "hirnforsch", "neurowissenschaft", "kognitiv", "depression", "gedächtnis", "bewusstsein", "persönlichkeit", "emotion", "intelligenz"] },
+      { "topic": "geschichte", "words": ["geschicht", "antike", "mittelalter", "römisch", "römer", "weltkrieg", "kaiserreich", "historisch", "archäolog", "jahrhundert", "pharao", "dynastie", "steinzeit", "bronzezeit", "wikinger", "ägypt"] }
+    ]
+  },
+  "feeds": [
+    { "name": "tagesschau", "section": "news", "region": "beide", "topic": "boerse", "url": "https://www.tagesschau.de/wirtschaft/finanzen/index~rss2.xml" },
+
+    { "name": "heise", "section": "news", "region": "beide", "topic": "technik", "url": "https://www.heise.de/rss/heise-atom.xml", "paywall": "title" },
+    { "name": "tagesschau", "section": "news", "region": "beide", "topic": "technik", "url": "https://www.tagesschau.de/wirtschaft/technologie/index~rss2.xml" },
+    { "name": "SPIEGEL", "section": "news", "region": "beide", "topic": "technik", "url": "https://www.spiegel.de/netzwelt/index.rss", "paywall": "check" },
+
+    { "name": "Sportschau", "section": "news", "region": "beide", "topic": "sport", "url": "https://www.sportschau.de/index~rss2.xml" },
+    { "name": "SPIEGEL", "section": "news", "region": "beide", "topic": "sport", "url": "https://www.spiegel.de/sport/index.rss", "paywall": "check" },
+
+    { "name": "Deutschlandfunk", "section": "news", "region": "beide", "topic": "kultur", "url": "https://www.deutschlandfunk.de/kultur.1495.de.rss" },
+    { "name": "ZEIT", "section": "news", "region": "beide", "topic": "kultur", "url": "https://newsfeed.zeit.de/kultur/index", "paywall": "check" },
+
+    { "name": "tagesschau", "section": "news", "region": "beide", "topic": "wissenschaft", "url": "https://www.tagesschau.de/wissen/index~rss2.xml" },
+    { "name": "Deutschlandfunk", "section": "news", "region": "beide", "topic": "wissenschaft", "url": "https://www.deutschlandfunk.de/wissen-106.rss" },
+
+    { "name": "tagesschau", "section": "news", "region": "deutschland", "topic": "wirtschaft", "url": "https://www.tagesschau.de/wirtschaft/konjunktur/index~rss2.xml" },
+    { "name": "tagesschau", "section": "news", "region": "deutschland", "topic": "wirtschaft", "url": "https://www.tagesschau.de/wirtschaft/verbraucher/index~rss2.xml" },
+    { "name": "tagesschau", "section": "news", "region": "welt", "topic": "wirtschaft", "url": "https://www.tagesschau.de/wirtschaft/weltwirtschaft/index~rss2.xml" },
+    { "name": "Deutschlandfunk", "section": "news", "region": "beide", "topic": "wirtschaft", "url": "https://www.deutschlandfunk.de/wirtschaft-106.rss" },
+    { "name": "SPIEGEL", "section": "news", "region": "beide", "topic": "wirtschaft", "url": "https://www.spiegel.de/wirtschaft/index.rss", "paywall": "check" },
+    { "name": "ZEIT", "section": "news", "region": "beide", "topic": "wirtschaft", "url": "https://newsfeed.zeit.de/wirtschaft/index", "paywall": "check" },
+
+    { "name": "tagesschau", "section": "news", "region": "deutschland", "topic": "politik", "url": "https://www.tagesschau.de/inland/index~rss2.xml" },
+    { "name": "tagesschau", "section": "news", "region": "welt", "topic": "politik", "url": "https://www.tagesschau.de/ausland/index~rss2.xml" },
+    { "name": "DW", "section": "news", "region": "welt", "topic": "politik", "url": "https://rss.dw.com/xml/rss-de-top" },
+    { "name": "Deutschlandfunk", "section": "news", "region": "welt", "topic": "politik", "url": "https://www.deutschlandfunk.de/europa-112.rss" },
+    { "name": "Deutschlandfunk", "section": "news", "region": "beide", "topic": "politik", "url": "https://www.deutschlandfunk.de/politikportal-100.rss" },
+    { "name": "SPIEGEL", "section": "news", "region": "welt", "topic": "politik", "url": "https://www.spiegel.de/ausland/index.rss", "paywall": "check" },
+    { "name": "SPIEGEL", "section": "news", "region": "deutschland", "topic": "politik", "url": "https://www.spiegel.de/politik/deutschland/index.rss", "paywall": "check" },
+    { "name": "ZEIT", "section": "news", "region": "beide", "topic": "politik", "url": "https://newsfeed.zeit.de/politik/index", "paywall": "check" },
+
+    { "name": "SPIEGEL", "section": "lesen", "topic": "geschichte", "url": "https://www.spiegel.de/geschichte/index.rss", "paywall": "check" },
+    { "name": "Spektrum", "section": "lesen", "topic": "wissenschaft", "rules": "wissen", "url": "https://www.spektrum.de/alias/rss/spektrum-de-rss-feed/996406", "paywall": "check" },
+    { "name": "Spektrum", "section": "lesen", "topic": "wissenschaft", "rules": "wissen", "url": "https://www.spektrum.de/alias/rss/spektrum-der-wissenschaft-rss-feed/982623", "paywall": "check" },
+    { "name": "SPIEGEL", "section": "lesen", "topic": "wissenschaft", "rules": "wissen", "url": "https://www.spiegel.de/wissenschaft/index.rss", "paywall": "check" },
+    { "name": "tagesschau", "section": "lesen", "topic": "wissenschaft", "rules": "wissen", "url": "https://www.tagesschau.de/wissen/forschung/index~rss2.xml" },
+    { "name": "Deutschlandfunk", "section": "lesen", "topic": "wissenschaft", "rules": "wissen", "url": "https://www.deutschlandfunk.de/wissen-106.rss" },
+    { "name": "scinexx", "section": "lesen", "topic": "wissenschaft", "rules": "wissen", "url": "https://www.scinexx.de/feed/" },
+    { "name": "Deutschlandfunk", "section": "lesen", "topic": "gesellschaft", "url": "https://www.deutschlandfunk.de/gesellschaft.1574.de.rss" },
+    { "name": "Deutschlandfunk", "section": "lesen", "topic": "gesellschaft", "url": "http://www.deutschlandfunk.de/podcast-essay-und-diskurs.1185.de.podcast.xml" }
+  ]
+}

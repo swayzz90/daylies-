@@ -1,45 +1,42 @@
 # Daily Brain
 
-Nachrichten und Allgemeinwissen statt Scrollen. Eine Web-App (PWA) fürs iPhone, gehostet auf GitHub Pages.
+Nachrichten, Lesestoff und Allgemeinwissen statt Scrollen. Eine Web-App (PWA) fürs iPhone, gehostet auf GitHub Pages.
 
-- **Nachrichten:** Deutschland und Welt aus RSS-Feeds (tagesschau, SPIEGEL, ZEIT, DW), stündlich aktualisiert, mit Suche und Gelesen-Markierung.
-- **Lernen:** Welt-Quiz mit vier Spielen (Hauptstädte, Welches Land?, Flaggen, Flagge finden), Regionenfilter, Lernkasten-System und Tagesserie.
+- **Nachrichten:** Filter Alle, Deutschland, Welt plus Themen (Politik, Wirtschaft, Börse, Technik, Wissenschaft, Sport, Kultur). Suche, Gelesen-Markierung, stündliche Aktualisierung.
+- **Lesen:** Wissenschaft, Geschichte, Psychologie und Gesellschaft zum Weiterbilden. Neuere und ältere Artikel (bis 30 Tage).
+- **Lernen:** Welt-Quiz mit vier Spielen, jederzeit wechselbar, ohne Tageslimit. Lernkasten-System und Tagesserie.
+- **Bezahlartikel:** Werden erkannt und ausgeblendet (siehe unten).
 
-## Einrichtung (ca. 10 Minuten)
+## Einrichtung
 
-1. **Repo anlegen:** Auf github.com ein neues Repository erstellen, z. B. `daily-brain`. Es muss **öffentlich** sein, weil GitHub Pages im kostenlosen Plan nur öffentliche Repos veröffentlicht.
-2. **Dateien hochladen:** Den Inhalt dieses Ordners ins Repo hochladen (inklusive des versteckten Ordners `.github`). Am einfachsten per GitHub Desktop oder:
-   ```bash
-   git init && git add . && git commit -m "Daily Brain"
-   git branch -M main
-   git remote add origin https://github.com/DEIN-NAME/daily-brain.git
-   git push -u origin main
-   ```
-   Hinweis: Beim Hochladen über die Weboberfläche wird der Ordner `.github` gern vergessen. Dann gibt es keine Nachrichten.
-3. **Pages aktivieren:** Im Repo unter *Settings → Pages → Build and deployment → Source* die Option **GitHub Actions** wählen.
-4. **Ersten Lauf starten:** Unter *Actions → „Nachrichten holen & veröffentlichen“ → Run workflow*. Nach 1–2 Minuten steht die App unter `https://DEIN-NAME.github.io/daily-brain/`.
-5. **Aufs iPhone:** Die Adresse in Safari öffnen, *Teilen → Zum Home-Bildschirm*. Danach startet sie wie eine normale App.
+1. Öffentliches Repo anlegen, alle Dateien hochladen (Ordner `.github/workflows/deploy.yml` über „Create new file“ anlegen).
+2. Settings → Pages → Source: **GitHub Actions**.
+3. Actions → „Nachrichten holen & veröffentlichen“ → Run workflow.
+4. Seite in Safari öffnen → Teilen → Zum Home-Bildschirm.
 
-## Wie es funktioniert
+## Quellen anpassen: `feeds.json`
 
-- Die GitHub Action läuft stündlich, holt die Feeds aus `feeds.json`, schreibt `data/news.json` und veröffentlicht die Seite neu.
-- Fortschritt, Serie und gelesene Meldungen liegen lokal auf dem Gerät (localStorage). Wer Safari-Daten löscht, löscht auch den Fortschritt.
-- Die App funktioniert offline. Nachrichten zeigen dann den letzten geladenen Stand.
+Jeder Feed hat:
+- `section`: `news` oder `lesen`
+- `region` (nur news): `deutschland`, `welt` oder `beide`. „beide“ erscheint unter beiden Filtern.
+- `topic`: Politik, Wirtschaft, Börse, Technik, Wissenschaft, Sport, Kultur, Psychologie, Geschichte, Gesellschaft
+- `rules` (optional): sortiert Artikel eines Mischfeeds per Stichwort in Psychologie oder Geschichte um
+- `paywall` (optional): `check` prüft jede Artikelseite, `title` nur den Titel
+- `enabled: false` schaltet einen Feed ab
 
-## Anpassen
+Reihenfolge zählt: Bei doppelten Artikeln gewinnt der Feed weiter oben. Spezielle Themen stehen deshalb vor allgemeinen.
+Ein Thema erscheint in der App nur, wenn es Einträge hat. Fällt ein Feed aus, laufen die anderen weiter.
 
-- **Quellen:** In `feeds.json` Feeds hinzufügen, entfernen oder mit `"enabled": false` abschalten. `category` ist `deutschland` oder `welt`.
-- **Aktualisierung:** In `.github/workflows/deploy.yml` die Zeile `cron`. GitHub startet geplante Läufe teils mit Verzögerung.
-- **Länder:** `countries.json` (194 Staaten, deutsche Namen und Hauptstädte). Israel ist aus den Hauptstadt-Spielen ausgenommen, weil die Hauptstadt international umstritten ist.
+## Bezahlartikel
+
+Zwei Stufen, beide ohne Umgehen von Bezahlschranken:
+1. Markierungen im Feed (z. B. „heise+“, „(S+)“ im Titel).
+2. Bei Quellen mit `"paywall": "check"` wird die Artikelseite auf die Angaben geprüft, die Verlage für Google setzen (`isAccessibleForFree: false`, `article:content_tier`). Ergebnisse werden zwischengespeichert, damit nicht jede Stunde alles neu geprüft wird.
+
+Im Log der Action steht die Zeile **BEZAHLARTIKEL ENTFERNT**. Dort siehst du, wie viele Artikel gefiltert und wie viele Seiten nicht prüfbar waren. In der App steht die Zahl unter „Nachrichten“.
 
 ## Gut zu wissen
 
-- GitHub pausiert geplante Läufe, wenn im Repo 60 Tage lang nichts passiert. Dann reicht ein beliebiger Commit oder ein manueller Start.
-- Falls ein Feed ausfällt, laufen die anderen weiter. Welcher Feed gerade klemmt, steht im Log der Action.
-- Lokal testen: `python3 -m http.server` im Ordner starten und `http://localhost:8000` öffnen. Nachrichten holen: `node fetch-news.mjs` (Node 20+).
-
-## Nächste Ausbaustufen
-
-1. Tagesstapel mit 10 Wissenskarten pro Tag
-2. Personenspiel „Wer war das?“ mit Profilen und Atlas
-3. Karte, Zeitstrahl, Früher oder später?
+- Fortschritt, Serie, Filter und gelesene Meldungen liegen lokal auf dem Gerät.
+- GitHub pausiert geplante Läufe nach 60 Tagen ohne Aktivität. Ein Commit oder manueller Start reicht.
+- Lokal testen: `python3 -m http.server`, Nachrichten holen mit `node fetch-news.mjs` (Node 20+).
