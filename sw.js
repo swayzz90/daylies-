@@ -2,7 +2,7 @@
 const VERSION = "db-__BUILD__";
 const SHELL = [
   "./", "index.html", "style.css", "app.js", "manifest.webmanifest",
-  "countries.json",
+  "countries.json", "content.json", "map.json",
   "bricolage-grotesque-latin-500-normal.woff2",
   "bricolage-grotesque-latin-700-normal.woff2",
   "bricolage-grotesque-latin-800-normal.woff2",

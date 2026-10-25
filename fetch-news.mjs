@@ -10,8 +10,8 @@ const CACHE_FILE = process.env.PAYWALL_CACHE || join(ROOT, ".paywall-cache.json"
 const UA = "Mozilla/5.0 (compatible; DailyBrain/2.0; privater Feed-Leser)";
 
 const LIMITS = {
-  news: { maxAgeH: 72, max: 500, perFeed: 40 },
-  lesen: { maxAgeH: 24 * 30, max: 250, perFeed: 25 },
+  news: { maxAgeH: 72, max: 700, perFeed: 30, perSource: 70 },
+  lesen: { maxAgeH: 24 * 30, max: 400, perFeed: 25, perSource: 50 },
 };
 const MAX_PAGE_CHECKS = 150;   // Artikelseiten pro Lauf, die auf Bezahlschranke geprüft werden
 const CHECK_BUDGET_MS = 90000; // Zeitbudget für die Seitenprüfung
@@ -67,7 +67,7 @@ export function pickTopic(feed, title, summary, rulesets = {}) {
 // Stufe 1: Kennzeichnung direkt im Feed (Titel-Präfix, Plus-Marker, Paywall-Tag mit positivem Wert)
 export function feedMarksPaid(title, block = "") {
   if (/^\s*(?:heise\+|SPIEGEL\+|Spektrum\+|Z\+|ZEIT\+|WELT\s?plus)(?:\s|\||:|$)/i.test(title)) return true;
-  if (/\(\s*[SZ]\+\s*\)/.test(title)) return true;
+  if (/\(\s*(?:[SZ]|g)\+\s*\)/i.test(title)) return true;
   if (/<(?:[a-z]+:)?paywall[^>]*>\s*(?:true|yes|1|plus|paid|locked)\s*<\//i.test(block)) return true;
   return false;
 }
@@ -111,6 +111,7 @@ export function parseFeed(xml, feed, rulesets = {}) {
       source: feed.name,
       section: feed.section || "news",
       region: feed.section === "lesen" ? null : feed.region || "beide",
+      lang: feed.lang || "de",
       topic: pickTopic(feed, title, summary, rulesets),
       date: isNaN(date) ? null : date.toISOString(),
       image: /\.(jpe?g|png|webp)/i.test(image) ? image : "",
@@ -222,6 +223,16 @@ async function main() {
     const n = used.get(it._feed) || 0;
     if (n >= (LIMITS[it.section] || LIMITS.news).perFeed) return false;
     used.set(it._feed, n + 1);
+    return true;
+  });
+
+  // Eine Quelle soll nicht alles dominieren: Limit je Quelle (neueste zuerst)
+  const perSource = new Map();
+  all = all.filter((it) => {
+    const key = it.section + "|" + it.source;
+    const n = perSource.get(key) || 0;
+    if (n >= (LIMITS[it.section] || LIMITS.news).perSource) return false;
+    perSource.set(key, n + 1);
     return true;
   });
 

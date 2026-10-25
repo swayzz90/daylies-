@@ -36,10 +36,13 @@
           <button role="tab" data-cat="welt" aria-selected="false">Welt</button>
         </div>
         <div class="chips topics" id="news-topics" data-section="news" role="radiogroup" aria-label="Thema"></div>
+        <div class="search-row">
         <label class="search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
           <input id="news-search" type="search" placeholder="Meldungen durchsuchen" autocomplete="off" enterkeyhint="search">
         </label>
+        <button class="lang-btn" type="button" aria-label="Sprache der Artikel wechseln">Alle</button>
+      </div>
       </div>
 
       <div id="news-list" class="news-list feed-list" aria-live="polite"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
@@ -55,10 +58,13 @@
 
       <div class="news-tools">
         <div class="chips topics" id="lesen-topics" data-section="lesen" role="radiogroup" aria-label="Thema"></div>
+        <div class="search-row">
         <label class="search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
           <input id="lesen-search" type="search" placeholder="Artikel durchsuchen" autocomplete="off" enterkeyhint="search">
         </label>
+        <button class="lang-btn" type="button" aria-label="Sprache der Artikel wechseln">Alle</button>
+      </div>
       </div>
 
       <div id="lesen-list" class="news-list feed-list" aria-live="polite"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
@@ -73,16 +79,19 @@
 
       <div class="streak" id="streak"></div>
 
+      <div class="modes first" id="deck-row"></div>
+
+      <h2 class="section-title">Wissen und Geschichte</h2>
+      <div class="modes" id="modes-know"></div>
+      <div class="modes" id="atlas-row"></div>
+
       <h2 class="section-title">Welt-Quiz</h2>
       <div class="chips" id="regions" role="radiogroup" aria-label="Region"></div>
       <div class="modes" id="modes"></div>
 
-      <h2 class="section-title">Kommt als Nächstes</h2>
-      <ul class="soon">
-        <li><strong>Tagesstapel</strong><span>10 Wissenskarten pro Tag mit Wiederholung</span></li>
-        <li><strong>Wer war das?</strong><span>Personen erraten, danach das Profil lesen</span></li>
-        <li><strong>Zeitstrahl</strong><span>Ereignisse in die richtige Reihenfolge bringen</span></li>
-      </ul>
+      <h2 class="section-title">Wissenskarte</h2>
+      <p class="page-sub" id="know-sub"></p>
+      <div class="mapbox kn" id="know-map"></div>
     </section>
   </main>
 
@@ -97,6 +106,17 @@
     </div>
     <div class="chips quiz-modes" id="quiz-modes" role="radiogroup" aria-label="Spiel wechseln"></div>
     <div class="quiz-body" id="quiz-body"></div>
+  </div>
+
+  <!-- Profile und Atlas -->
+  <div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-label="Details">
+    <div class="sheet-top">
+      <button class="icon-btn" id="sheet-back" aria-label="Zurück">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <span id="sheet-title"></span>
+    </div>
+    <div class="sheet-body" id="sheet-body"></div>
   </div>
 
   <nav class="tabbar" aria-label="Hauptnavigation">

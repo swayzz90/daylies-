@@ -53,14 +53,18 @@ const readIds = new Set(store.get("read", []));
 const TOPICS = {
   politik: "Politik", wirtschaft: "Wirtschaft", boerse: "Börse", technik: "Technik",
   wissenschaft: "Wissenschaft", sport: "Sport", kultur: "Kultur",
-  psychologie: "Psychologie", geschichte: "Geschichte", gesellschaft: "Gesellschaft",
+  psychologie: "Psychologie", geschichte: "Geschichte", philosophie: "Philosophie",
+  gesellschaft: "Gesellschaft", gesundheit: "Gesundheit",
 };
+const LANGS = ["alle", "de", "en"];
+const LANG_LABEL = { alle: "Alle", de: "DE", en: "EN" };
 const savedFilters = store.get("filters", {});
+let langFilter = LANGS.includes(savedFilters.lang) ? savedFilters.lang : "alle";
 const feedUI = {
   news: { list: "#news-list", topics: "#news-topics", region: savedFilters.region || "alle", topic: savedFilters.newsTopic || "alle", query: "" },
   lesen: { list: "#lesen-list", topics: "#lesen-topics", topic: savedFilters.lesenTopic || "alle", query: "" },
 };
-const saveFilters = () => store.set("filters", { region: feedUI.news.region, newsTopic: feedUI.news.topic, lesenTopic: feedUI.lesen.topic });
+const saveFilters = () => store.set("filters", { region: feedUI.news.region, newsTopic: feedUI.news.topic, lesenTopic: feedUI.lesen.topic, lang: langFilter });
 
 function markRead(id) {
   readIds.add(id);
@@ -80,6 +84,7 @@ async function loadNews() {
       section: it.section || "news",
       region: it.region ?? it.category ?? "beide",
       topic: it.topic || "politik",
+      lang: it.lang || "de",
     }));
     news.updated = data.updated;
     news.paywall = data.stats?.paywallRemoved || 0;
@@ -132,7 +137,8 @@ function renderFeed(section) {
 
   // Region (nur Nachrichten) und Themen-Chips; Themen ohne Einträge werden ausgeblendet
   const inRegion = all.filter((it) =>
-    section !== "news" || ui.region === "alle" || it.region === ui.region || it.region === "beide");
+    (langFilter === "alle" || it.lang === langFilter) &&
+    (section !== "news" || ui.region === "alle" || it.region === ui.region || it.region === "beide"));
   const counts = {};
   inRegion.forEach((it) => { counts[it.topic] = (counts[it.topic] || 0) + 1; });
   if (ui.topic !== "alle" && !counts[ui.topic]) ui.topic = "alle";
@@ -149,7 +155,7 @@ function renderFeed(section) {
 
   if (!items.length) {
     list.innerHTML = `<div class="empty"><strong>Keine Treffer</strong>
-      ${q ? `Für „${esc(ui.query)}“ gibt es gerade nichts.` : "In dieser Auswahl gibt es gerade nichts."} Versuch einen anderen Begriff oder Filter.</div>`;
+      ${q ? `Für „${esc(ui.query)}“ gibt es gerade nichts.` : "In dieser Auswahl gibt es gerade nichts."} Versuch einen anderen Begriff, ein anderes Thema oder die Sprache „Alle“.</div>`;
     return;
   }
 
@@ -159,11 +165,12 @@ function renderFeed(section) {
     const label = dayLabel(it.date);
     if (label !== lastDay) { html += `<h2 class="day-label">${esc(label)}</h2>`; lastDay = label; }
     const chip = ui.topic === "alle" && TOPICS[it.topic] ? `<span class="cat">${TOPICS[it.topic]}</span>` : "";
+    const en = it.lang === "en" ? `<span class="cat">EN</span>` : "";
     const time = section === "news" ? `<span>${esc(relTime(it.date))}</span>` : "";
     html += `
       <a class="news-item${readIds.has(it.id) ? " read" : ""}" href="${esc(it.link)}" target="_blank" rel="noopener" data-id="${esc(it.id)}">
         <div>
-          <div class="news-meta"><span class="src">${esc(it.source)}</span>${time}${chip}</div>
+          <div class="news-meta"><span class="src">${esc(it.source)}</span>${time}${chip}${en}</div>
           <h3 class="news-title">${esc(it.title)}</h3>
           ${it.summary ? `<p class="news-summary">${esc(it.summary)}</p>` : ""}
         </div>
@@ -225,6 +232,23 @@ document.querySelectorAll(".segmented button").forEach((b) =>
   })
 );
 
+// Sprache (gilt für Nachrichten und Lesen)
+const markLang = () => document.querySelectorAll(".lang-btn").forEach((b) => {
+  b.textContent = LANG_LABEL[langFilter];
+  b.dataset.lang = langFilter;
+  b.title = { alle: "Alle Sprachen", de: "Nur Deutsch", en: "Nur Englisch" }[langFilter];
+});
+markLang();
+document.querySelectorAll(".lang-btn").forEach((b) =>
+  b.addEventListener("click", () => {
+    langFilter = LANGS[(LANGS.indexOf(langFilter) + 1) % LANGS.length];
+    saveFilters();
+    markLang();
+    renderFeed("news");
+    renderFeed("lesen");
+  })
+);
+
 let searchTimer;
 [["news", "#news-search"], ["lesen", "#lesen-search"]].forEach(([section, sel]) =>
   $(sel).addEventListener("input", (e) => {
@@ -274,13 +298,29 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* =================================================================
-   LERNEN: Welt-Quiz
+   LERNEN
    ================================================================= */
 let countries = [];
+let CONTENT = null;        // Ereignisse, Aussagen, Karten, Personen (content.json)
+let MAPD = null;           // Weltkarte (map.json)
+let MAP_MARKUP = "";
+const PEOPLE = {};         // id -> Person
+const CARD = {};           // id -> Karte
+const MAPIDX = {};         // Länderkürzel -> { s: größte Kantenlänge }
 const REGIONS = ["Alle", "Europa", "Asien", "Afrika", "Amerika", "Ozeanien"];
 let region = store.get("region", "Alle");
 
-const MODES = [
+const THIS_YEAR = new Date().getFullYear();
+const fmtYear = (y) => (y < 0 ? `${-y} v. Chr.` : String(y));
+const lifeSpan = (p) => `${p.approx ? "um " : ""}${fmtYear(p.b)} bis ${fmtYear(p.d)}`;
+const initials = (name) => name.replace(/ (Jr\.|der Große|II\.|VII\.)/g, "").split(" ").filter((w) => /^[A-ZÄÖÜ]/.test(w)).slice(0, 2).map((w) => w[0]).join("");
+const nameOf = (id) => countries.find((c) => c.id === id)?.name || "";
+const ERA_LABEL = { antike: "Antike", mittelalter: "Mittelalter und Renaissance", neuzeit: "Frühe Neuzeit", j19: "19. Jahrhundert", j20: "20. Jahrhundert" };
+const PTOPIC_LABEL = { politik: "Politik und Geschichte", wissen: "Wissenschaft und Technik", wirtschaft: "Wirtschaft", kultur: "Kultur und Philosophie" };
+const CTOPIC_LABEL = { wirtschaft: "Wirtschaft", geschichte: "Geschichte", wissenschaft: "Wissenschaft", politik: "Politik" };
+
+/* ---------- Spiele ---------- */
+const COUNTRY_MODES = [
   {
     id: "capital", title: "Hauptstädte", sub: "Land sehen, Hauptstadt wählen", icon: "🏛️",
     usable: (c) => !c.noCapitalQuiz,
@@ -310,9 +350,39 @@ const MODES = [
     distinct: (c) => c.flag,
   },
 ];
+COUNTRY_MODES.forEach((m) => { m.kind = "country"; m.sr = true; m.short = m.title; m.pick = () => pickFrom(m.id, pool(m)); });
 
-/* Fortschritt: Lernkasten-System
-   Kasten 0 = falsch beantwortet, 1..5 = immer sicherer. Ab Kasten 3 gilt ein Land als „sicher“. */
+// Karte: nur Länder, die auf dem Handy groß genug zum Antippen sind
+function mapUsable(c) {
+  const m = MAPIDX[c.id];
+  if (!m || !MAPD) return false;
+  const v = MAPD.views[region === "Alle" ? c.region : region] || MAPD.views.Alle;
+  const px = Math.min(window.innerWidth || 390, 640) - 40;
+  return m.s * (px / v[2]) >= 14;
+}
+const MAP_MODE = {
+  id: "map", kind: "map", title: "Karte", sub: "Land auf der Karte antippen", icon: "🗺️", sr: true, short: "Karte",
+  usable: mapUsable, pick: () => pickFrom("map", pool(MAP_MODE)),
+};
+
+const GAMES = [
+  ...COUNTRY_MODES, MAP_MODE,
+  { id: "tf", kind: "tf", title: "Wahr oder falsch", sub: "Stimmt die Aussage?", icon: "W/F", iconText: true, sr: true, short: "Wahr/Falsch", know: true,
+    pick: () => pickFrom("tf", CONTENT.facts) },
+  { id: "before", kind: "before", title: "Früher oder später?", sub: "Welches Ereignis kam zuerst?", icon: "⏳", short: "Früher/Später", know: true,
+    pick: () => pickPairs() },
+  { id: "year", kind: "year", title: "Jahr schätzen", sub: "Je näher, desto mehr Punkte", icon: "📅", scored: true, short: "Jahr schätzen", know: true,
+    pick: () => shuffle(CONTENT.events).slice(0, 10) },
+  { id: "timeline", kind: "timeline", title: "Zeitstrahl", sub: "Fünf Ereignisse ordnen", icon: "📜", short: "Zeitstrahl", know: true,
+    pick: () => pickSets(5) },
+  { id: "who", kind: "who", title: "Wer war das?", sub: "Hinweise lesen, Person erraten", icon: "👤", sr: true, scored: true, short: "Wer war das?", know: true,
+    pick: () => pickFrom("who", CONTENT.people) },
+];
+const DECK = { id: "cards", kind: "deck", title: "Tagesstapel", sr: true, noAgain: true, short: "Tagesstapel" };
+const gameById = (id) => GAMES.find((g) => g.id === id);
+
+/* ---------- Fortschritt: Lernkasten-System ----------
+   Kasten 0 = falsch beantwortet, 1..5 = immer sicherer. Ab Kasten 3 gilt etwas als „sicher“. */
 const INTERVAL_DAYS = [0, 0, 1, 3, 7, 21];
 const MASTERED = 3;
 let progress = store.get("progress", {});
@@ -334,15 +404,14 @@ function pool(mode) {
   return countries.filter((c) => mode.usable(c) && (region === "Alle" || c.region === region));
 }
 
-function pickQuestions(mode, n = 10) {
+// Auswahl: erst fällige Wiederholungen, dann Neues, dann das am längsten Ungeübte
+function pickFrom(modeId, all, n = 10) {
   const now = Date.now();
-  const all = pool(mode);
-  const due = shuffle(all.filter((c) => { const r = rec(mode.id, c.id); return r && r.box < 5 && r.due <= now; }))
-    .sort((a, b) => rec(mode.id, a.id).box - rec(mode.id, b.id).box);
-  const fresh = shuffle(all.filter((c) => !rec(mode.id, c.id)));
+  const due = shuffle(all.filter((c) => { const r = rec(modeId, c.id); return r && r.box < 5 && r.due <= now; }))
+    .sort((a, b) => rec(modeId, a.id).box - rec(modeId, b.id).box);
+  const fresh = shuffle(all.filter((c) => !rec(modeId, c.id)));
   const rest = shuffle(all.filter((c) => !due.includes(c) && !fresh.includes(c)))
-    .sort((a, b) => rec(mode.id, a.id).due - rec(mode.id, b.id).due);
-
+    .sort((a, b) => rec(modeId, a.id).due - rec(modeId, b.id).due);
   const out = [...due.slice(0, 5)];
   for (const list of [fresh, due.slice(5), rest]) for (const c of list) if (out.length < n && !out.includes(c)) out.push(c);
   return shuffle(out.slice(0, n));
@@ -355,6 +424,38 @@ function options(mode, target) {
   return shuffle([target, ...[...near, ...far].slice(0, 3)]);
 }
 
+// Paare für „Früher oder später?“
+function pickPairs(n = 10) {
+  const ev = shuffle(CONTENT.events), used = new Set(), out = [];
+  for (const a of ev) {
+    if (used.has(a.id)) continue;
+    const cand = ev.filter((x) => !used.has(x.id) && x.id !== a.id && Math.abs(x.y - a.y) >= 8);
+    const near = cand.filter((x) => Math.abs(x.y - a.y) <= 200);
+    const list = near.length && Math.random() < 0.7 ? near : cand;
+    if (!list.length) continue;
+    const b = list[Math.floor(Math.random() * list.length)];
+    used.add(a.id); used.add(b.id); out.push([a, b]);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
+// Fünfer-Gruppen für den Zeitstrahl (Abstand mindestens 6 Jahre)
+function pickSets(n = 5, size = 5) {
+  const used = new Set(), sets = [];
+  for (let tries = 0; tries < 200 && sets.length < n; tries++) {
+    const set = [];
+    for (const e of shuffle(CONTENT.events)) {
+      if (used.has(e.id)) continue;
+      if (set.every((x) => Math.abs(x.y - e.y) >= 6)) set.push(e);
+      if (set.length === size) break;
+    }
+    if (set.length === size) { set.forEach((e) => used.add(e.id)); sets.push(set); }
+  }
+  return sets;
+}
+
+/* ---------- Lernen-Übersicht ---------- */
 function streakInfo() {
   const set = new Set(activity);
   let n = 0;
@@ -362,6 +463,47 @@ function streakInfo() {
   if (!set.has(dayKey(d))) d.setDate(d.getDate() - 1);
   while (set.has(dayKey(d))) { n++; d.setDate(d.getDate() - 1); }
   return { n, today: set.has(dayKey()), set };
+}
+
+const CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+function row({ attr, icon, iconText, title, sub, pct }) {
+  return `
+    <button class="mode" ${attr}>
+      <span class="mode-icon${iconText ? " text" : ""}" aria-hidden="true">${icon}</span>
+      <span>
+        <span class="mode-title">${title}</span>
+        <span class="mode-sub" style="display:block">${sub}</span>
+        ${pct == null ? "" : `<span class="bar" aria-hidden="true"><b style="width:${pct}%"></b></span>`}
+      </span>
+      ${CHEVRON}
+    </button>`;
+}
+
+function gameStats(g) {
+  const now = Date.now();
+  let list = null;
+  if (g.kind === "country" || g.kind === "map") list = pool(g);
+  else if (g.id === "tf") list = CONTENT?.facts;
+  else if (g.id === "who") list = CONTENT?.people;
+  if (list) {
+    const mastered = list.filter((x) => (rec(g.id, x.id)?.box ?? 0) >= MASTERED).length;
+    const due = list.filter((x) => { const r = rec(g.id, x.id); return r && r.box < 5 && r.due <= now; }).length;
+    return { sub: `${mastered} von ${list.length} sicher${due ? `, ${due} zum Wiederholen` : ""}`, pct: list.length ? Math.round((mastered / list.length) * 100) : 0 };
+  }
+  const best = store.get("best", {})[g.id];
+  return { sub: best != null ? `Beste Runde: ${best} richtig` : g.sub, pct: null };
+}
+const gameRow = (g) => { const s = gameStats(g); return row({ attr: `data-game="${g.id}"`, icon: g.icon, iconText: g.iconText, title: g.title, sub: s.sub, pct: s.pct }); };
+
+const masteredTotal = () => Object.values(progress).reduce((s, m) => s + Object.values(m).filter((r) => r.box >= MASTERED).length, 0);
+
+function mastery(id) {
+  let seen = false, sure = 0;
+  for (const m of ["capital", "capital-rev", "flag", "flag-rev", "map"]) {
+    const r = rec(m, id);
+    if (r) { seen = true; if (r.box >= MASTERED) sure++; }
+  }
+  return !seen ? 0 : sure >= 3 ? 3 : sure >= 1 ? 2 : 1;
 }
 
 function renderLearn() {
@@ -379,67 +521,93 @@ function renderLearn() {
       <span>${today ? "Heute erledigt. Stark." : "Spiel heute eine Runde, um die Serie zu halten."}</span>
       <div class="week" aria-label="Letzte 7 Tage">${week.join("")}</div>
     </div>`;
+  $("#learn-sub").textContent = `${masteredTotal()} Antworten sitzen sicher`;
 
-  const totalMastered = MODES.reduce((s, m) => s + countries.filter((c) => (rec(m.id, c.id)?.box ?? 0) >= MASTERED).length, 0);
-  $("#learn-sub").textContent = `${totalMastered} Antworten sitzen sicher`;
+  // Tagesstapel, Wissen und Personen
+  const know = $("#modes-know");
+  if (CONTENT) {
+    const d = deckState();
+    const done = d.pos >= d.ids.length;
+    $("#deck-row").innerHTML = row({
+      attr: 'data-open="deck"', icon: done ? "✓" : "🗂️", iconText: done,
+      title: "Tagesstapel",
+      sub: done ? "Heute geschafft. Morgen kommen 10 neue Karten." : `${d.pos} von ${d.ids.length} Karten heute${d.reviews ? `, ${d.reviews} Wiederholungen dabei` : ""}`,
+      pct: Math.round((d.pos / d.ids.length) * 100),
+    });
+    know.innerHTML = GAMES.filter((g) => g.know).map(gameRow).join("");
+    const found = discovered().length;
+    $("#atlas-row").innerHTML = row({
+      attr: 'data-open="atlas"', icon: "🧭", title: "Personen-Atlas",
+      sub: `${found} von ${CONTENT.people.length} Personen entdeckt`, pct: Math.round((found / CONTENT.people.length) * 100),
+    });
+  } else {
+    $("#deck-row").innerHTML = ""; $("#atlas-row").innerHTML = "";
+    know.innerHTML = `<div class="empty"><strong>Inhalte fehlen</strong>Die Datei content.json konnte nicht geladen werden.</div>`;
+  }
 
+  // Welt-Quiz
   $("#regions").innerHTML = REGIONS.map((r) =>
     `<button role="radio" aria-checked="${r === region}" data-region="${r}">${r}</button>`).join("");
+  $("#modes").innerHTML = [...COUNTRY_MODES, ...(MAPD ? [MAP_MODE] : [])].map(gameRow).join("");
 
-  const now = Date.now();
-  $("#modes").innerHTML = MODES.map((m) => {
-    const p = pool(m);
-    const mastered = p.filter((c) => (rec(m.id, c.id)?.box ?? 0) >= MASTERED).length;
-    const dueCount = p.filter((c) => { const r = rec(m.id, c.id); return r && r.box < 5 && r.due <= now; }).length;
-    const pct = p.length ? Math.round((mastered / p.length) * 100) : 0;
-    const dueText = dueCount ? `, ${dueCount} zum Wiederholen` : "";
-    return `
-      <button class="mode" data-mode="${m.id}">
-        <span class="mode-icon${m.iconText ? " text" : ""}" aria-hidden="true">${m.icon}</span>
-        <span>
-          <span class="mode-title">${m.title}</span>
-          <span class="mode-sub" style="display:block">${mastered} von ${p.length} sicher${dueText}</span>
-          <span class="bar" aria-hidden="true"><b style="width:${pct}%"></b></span>
-        </span>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-      </button>`;
-  }).join("");
+  // Wissenskarte
+  if (MAPD) {
+    const v = MAPD.views.Alle;
+    const quiz = new Set(countries.map((c) => c.id));
+    let sure = 0;
+    const paths = MAPD.countries.map((m) => {
+      const lvl = m.i && quiz.has(m.i) ? mastery(m.i) : -1;
+      return `<path class="land ${lvl < 0 ? "bg" : "k" + lvl}" d="${m.d}"/>`;
+    }).join("");
+    countries.forEach((c) => { if (mastery(c.id) === 3) sure++; });
+    $("#know-sub").textContent = `${sure} von ${countries.length} Ländern sicher. Die Karte füllt sich, je mehr du übst.`;
+    $("#know-map").innerHTML = `<svg viewBox="${v.join(" ")}" role="img" aria-label="Weltkarte mit deinem Lernstand">${paths}</svg>
+      <div class="legend"><span><i class="k0"></i>offen</span><span><i class="k1"></i>in Übung</span><span><i class="k2"></i>teils sicher</span><span><i class="k3"></i>sicher</span></div>`;
+  }
 }
 
 $("#regions").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
   region = b.dataset.region; store.set("region", region); renderLearn();
 });
-$("#modes").addEventListener("click", (e) => {
+$("#view-learn").addEventListener("click", (e) => {
   const b = e.target.closest(".mode"); if (!b) return;
-  startQuiz(MODES.find((m) => m.id === b.dataset.mode));
+  if (b.dataset.game) startQuiz(gameById(b.dataset.game));
+  else if (b.dataset.open === "deck") startDeck();
+  else if (b.dataset.open === "atlas") openSheet(atlasView);
 });
 
-/* ---------- Quiz-Ablauf ---------- */
+/* ---------- Quiz-Rahmen ---------- */
 let quiz = null;
 let nextTimer;
 
-function startQuiz(mode) {
-  clearTimeout(nextTimer);
-  const questions = pickQuestions(mode);
-  if (!questions.length) return;
-  quiz = { mode, questions, i: 0, results: [] };
+function showQuiz() {
   $("#quiz").hidden = false;
   document.body.style.overflow = "hidden";
+}
+
+function startQuiz(game) {
+  clearTimeout(nextTimer);
+  const questions = game.pick();
+  if (!questions.length) return;
+  quiz = { mode: game, questions, i: 0, results: [], points: 0 };
+  showQuiz();
   renderModeSwitcher();
   renderQuestion();
 }
 
 function renderModeSwitcher() {
-  $("#quiz-modes").innerHTML = MODES.map((m) =>
-    `<button role="radio" aria-checked="${m.id === quiz.mode.id}" data-mode="${m.id}">${m.title}</button>`).join("");
+  const avail = GAMES.filter((g) => (g.know ? !!CONTENT : g.kind === "map" ? !!MAPD : true));
+  $("#quiz-modes").innerHTML = avail.map((g) =>
+    `<button role="radio" aria-checked="${g.id === quiz.mode.id}" data-mode="${g.id}">${g.short}</button>`).join("");
   const box = $("#quiz-modes"), act = box.querySelector('[aria-checked="true"]');
-  box.scrollLeft = act.getBoundingClientRect().left - box.getBoundingClientRect().left + box.scrollLeft - (box.clientWidth - act.offsetWidth) / 2;
+  if (act) box.scrollLeft = act.getBoundingClientRect().left - box.getBoundingClientRect().left + box.scrollLeft - (box.clientWidth - act.offsetWidth) / 2;
+  else box.scrollLeft = 0;
 }
 $("#quiz-modes").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b || !quiz || b.dataset.mode === quiz.mode.id) return;
-  startQuiz(MODES.find((m) => m.id === b.dataset.mode));
+  startQuiz(gameById(b.dataset.mode));
 });
 
 function closeQuiz() {
@@ -460,55 +628,29 @@ function renderDots() {
   $("#quiz-count").textContent = `${Math.min(quiz.i + 1, quiz.questions.length)}/${quiz.questions.length}`;
 }
 
+const RENDER = {
+  country: (t) => renderCountry(t), map: (t) => renderMap(t), tf: (t) => renderTF(t), before: (t) => renderBefore(t),
+  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), who: (t) => renderWho(t), deck: (t) => renderDeck(t),
+};
 function renderQuestion() {
-  const { mode } = quiz;
-  const target = quiz.questions[quiz.i];
-  const opts = options(mode, target);
   renderDots();
-  $("#quiz-body").innerHTML = `
-    <div class="prompt">${mode.prompt(target)}</div>
-    <div class="answers${mode.flagAnswers ? " flags" : ""}">
-      ${opts.map((o) => `<button class="answer" data-id="${o.id}">${mode.answerLabel(o)}</button>`).join("")}
-    </div>
-    <div class="feedback" id="feedback"></div>`;
-
-  $("#quiz-body").querySelectorAll(".answer").forEach((btn) =>
-    btn.addEventListener("click", () => answer(btn, target, opts), { once: true })
-  );
+  RENDER[quiz.mode.kind](quiz.questions[quiz.i]);
 }
 
-function answer(btn, target, opts) {
-  const { mode } = quiz;
-  const correct = btn.dataset.id === target.id;
-  const buttons = $("#quiz-body").querySelectorAll(".answer");
-  buttons.forEach((b) => {
-    b.disabled = true;
-    if (b.dataset.id === target.id) b.classList.add("correct");
-  });
-  if (!correct) {
-    btn.classList.add("wrong");
-    if (mode.flagAnswers) {
-      // Bei Flaggen zeigen, welche Länder die Flaggen waren
-      buttons.forEach((b) => {
-        const c = opts.find((o) => o.id === b.dataset.id);
-        b.insertAdjacentHTML("beforeend", `<span class="hint">${esc(c.name)}</span>`);
-      });
-    }
-  }
-  saveRec(mode.id, target.id, correct);
-  const chosen = opts.find((o) => o.id === btn.dataset.id);
-  quiz.results[quiz.i] = { correct, target, chosen };
+// Ergebnis einer Frage festhalten und weiterschalten
+function settle({ correct, show, feedback = "", auto = correct, delay = 650, pts = 0, after }) {
+  quiz.results[quiz.i] = { correct, show, pts };
+  quiz.points += pts;
   renderDots();
-
   const fb = $("#feedback");
-  if (correct) {
-    nextTimer = setTimeout(next, 650);
+  if (auto) {
+    fb.innerHTML = feedback;
+    nextTimer = setTimeout(next, delay);
   } else {
-    fb.innerHTML = `<p>Richtig wäre <strong>${esc(mode.answerText(target))}</strong></p>
-      <button class="btn" id="next">Weiter</button>`;
-    $("#next").focus();
+    fb.innerHTML = `${feedback}<button class="btn" id="next">Weiter</button>`;
     $("#next").addEventListener("click", next);
   }
+  after?.();
 }
 
 function next() {
@@ -518,16 +660,403 @@ function next() {
   else renderResult();
 }
 
+const FEEDBACK = '<div class="feedback" id="feedback"></div>';
+
+/* ---------- Länder-Spiele ---------- */
+function renderCountry(target) {
+  const { mode } = quiz;
+  const opts = options(mode, target);
+  $("#quiz-body").innerHTML = `
+    <div class="prompt">${mode.prompt(target)}</div>
+    <div class="answers${mode.flagAnswers ? " flags" : ""}">
+      ${opts.map((o) => `<button class="answer" data-id="${o.id}">${mode.answerLabel(o)}</button>`).join("")}
+    </div>${FEEDBACK}`;
+  $("#quiz-body").querySelectorAll(".answer").forEach((btn) =>
+    btn.addEventListener("click", () => answerCountry(btn, target, opts), { once: true }));
+}
+
+function answerCountry(btn, target, opts) {
+  const { mode } = quiz;
+  const correct = btn.dataset.id === target.id;
+  const buttons = $("#quiz-body").querySelectorAll(".answer");
+  buttons.forEach((b) => { b.disabled = true; if (b.dataset.id === target.id) b.classList.add("correct"); });
+  if (!correct) {
+    btn.classList.add("wrong");
+    if (mode.flagAnswers) {
+      buttons.forEach((b) => {
+        const c = opts.find((o) => o.id === b.dataset.id);
+        b.insertAdjacentHTML("beforeend", `<span class="hint">${esc(c.name)}</span>`);
+      });
+    }
+  }
+  saveRec(mode.id, target.id, correct);
+  const chosen = opts.find((o) => o.id === btn.dataset.id);
+  settle({
+    correct,
+    show: { icon: target.flag, title: target.name, sub: mode.id.startsWith("capital") ? "Hauptstadt " + target.capital : "Deine Wahl: " + chosen.name },
+    feedback: correct ? "" : `<p>Richtig wäre <strong>${esc(mode.answerText(target))}</strong></p>`,
+  });
+}
+
+/* ---------- Karte ---------- */
+function renderMap(target) {
+  const view = region === "Alle" ? target.region : region;
+  const v = MAPD.views[view] || MAPD.views.Alle;
+  $("#quiz-body").innerHTML = `
+    <div class="prompt tight"><p class="prompt-label">Tippe auf</p><h2 class="prompt-big small">${esc(target.name)}</h2></div>
+    <div class="mapbox"><svg id="quiz-map" viewBox="${v.join(" ")}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Karte">${MAP_MARKUP}</svg></div>
+    <p class="map-tip">Ausschnitt: ${view}</p>
+    ${FEEDBACK}`;
+  const svg = $("#quiz-map");
+  let locked = false;
+  svg.addEventListener("click", (e) => {
+    const p = e.target.closest("path.land:not(.bg)");
+    if (!p || locked) return;
+    locked = true;
+    const id = p.dataset.id;
+    const correct = id === target.id;
+    p.classList.add(correct ? "ok" : "no");
+    const right = svg.querySelector(`path[data-id="${target.id}"]`);
+    if (!correct && right) { right.classList.add("ok"); svg.appendChild(right); }
+    svg.appendChild(p);
+    saveRec("map", target.id, correct);
+    settle({
+      correct,
+      show: { icon: target.flag, title: target.name, sub: correct ? "" : `Du hast ${nameOf(id)} gewählt` },
+      feedback: correct ? "" : `<p>Das ist <strong>${esc(nameOf(id))}</strong>. Gesucht war <strong>${esc(target.name)}</strong>.</p>`,
+    });
+  });
+}
+
+/* ---------- Wahr oder falsch ---------- */
+function renderTF(f) {
+  $("#quiz-body").innerHTML = `
+    <div class="prompt"><p class="prompt-label">Wahr oder falsch?</p><h2 class="prompt-statement">${esc(f.s)}</h2></div>
+    <div class="answers two"><button class="answer" data-v="1">Wahr</button><button class="answer" data-v="0">Falsch</button></div>
+    ${FEEDBACK}`;
+  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
+    const correct = (btn.dataset.v === "1") === f.a;
+    $("#quiz-body").querySelectorAll(".answer").forEach((b) => {
+      b.disabled = true;
+      if ((b.dataset.v === "1") === f.a) b.classList.add("correct");
+    });
+    if (!correct) btn.classList.add("wrong");
+    saveRec("tf", f.id, correct);
+    settle({
+      correct, auto: false,
+      show: { icon: f.a ? "✓" : "✗", title: f.s, sub: f.e },
+      feedback: `<p><strong>${f.a ? "Wahr" : "Falsch"}.</strong> ${esc(f.e)}</p>`,
+    });
+  }, { once: true }));
+}
+
+/* ---------- Früher oder später? ---------- */
+function renderBefore([a, b]) {
+  $("#quiz-body").innerHTML = `
+    <div class="prompt short"><p class="prompt-label">Was geschah früher?</p></div>
+    <div class="answers">
+      <button class="answer" data-i="0">${esc(a.t)}<span class="hint"></span></button>
+      <button class="answer" data-i="1">${esc(b.t)}<span class="hint"></span></button>
+    </div>${FEEDBACK}`;
+  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
+    const first = a.y < b.y ? 0 : 1;
+    const correct = Number(btn.dataset.i) === first;
+    const btns = [...$("#quiz-body").querySelectorAll(".answer")];
+    btns.forEach((x, i) => { x.disabled = true; x.querySelector(".hint").textContent = fmtYear((i ? b : a).y); if (i === first) x.classList.add("correct"); });
+    if (!correct) btn.classList.add("wrong");
+    const early = first ? b : a;
+    settle({
+      correct, delay: 1500,
+      show: { icon: "✗", title: `${a.t} oder ${b.t}`, sub: `${fmtYear(a.y)} und ${fmtYear(b.y)}` },
+      feedback: correct ? "" : `<p>Früher war: <strong>${esc(early.t)}</strong> (${fmtYear(early.y)})</p>`,
+    });
+  }, { once: true }));
+}
+
+/* ---------- Jahr schätzen ---------- */
+function renderYear(e) {
+  $("#quiz-body").innerHTML = `
+    <div class="prompt"><p class="prompt-label">In welchem Jahr geschah das?</p><h2 class="prompt-statement">${esc(e.t)}</h2></div>
+    <div class="year-row">
+      <input id="yr" type="number" inputmode="numeric" placeholder="Jahr" aria-label="Jahr">
+      <button class="lang-btn" id="era" type="button" data-bc="0">n. Chr.</button>
+    </div>
+    <button class="btn wide" id="check">Prüfen</button>
+    ${FEEDBACK}`;
+  const input = $("#yr"), era = $("#era"), check = $("#check");
+  era.addEventListener("click", () => {
+    const bc = era.dataset.bc === "1" ? "0" : "1";
+    era.dataset.bc = bc;
+    era.textContent = bc === "1" ? "v. Chr." : "n. Chr.";
+  });
+  const submit = () => {
+    const raw = parseInt(input.value, 10);
+    if (Number.isNaN(raw) || check.disabled) return;
+    const guess = era.dataset.bc === "1" ? -Math.abs(raw) : Math.abs(raw);
+    const err = Math.abs(guess - e.y);
+    const tol = Math.max(3, Math.round(Math.abs(THIS_YEAR - e.y) * 0.04));
+    const correct = err <= tol;
+    const pts = Math.max(0, Math.round(100 * (1 - err / (tol * 4))));
+    input.disabled = true; era.disabled = true; check.disabled = true; check.hidden = true;
+    settle({
+      correct, auto: false, pts,
+      show: { icon: correct ? "✓" : "✗", title: e.t, sub: `Richtig: ${fmtYear(e.y)}, dein Tipp: ${fmtYear(guess)}` },
+      feedback: `<p><strong>${fmtYear(e.y)}</strong><br>${err === 0 ? "Auf das Jahr genau!" : `${err} ${err === 1 ? "Jahr" : "Jahre"} daneben`} · ${pts} Punkte</p>`,
+    });
+  };
+  check.addEventListener("click", submit);
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") submit(); });
+}
+
+/* ---------- Zeitstrahl ---------- */
+function renderTimeline(set) {
+  const order = [];
+  const shuffled = shuffle(set);
+  let finished = false;
+  $("#quiz-body").innerHTML = `
+    <div class="prompt short"><p class="prompt-label">Tippe die Ereignisse der Reihe nach an: das älteste zuerst.</p></div>
+    <div class="tl" id="tl"></div>
+    <div class="tl-actions"><button class="btn ghost" id="undo" type="button">Letzte Auswahl zurücknehmen</button></div>
+    ${FEEDBACK}`;
+  const draw = () => {
+    $("#tl").innerHTML = shuffled.map((ev) => {
+      const k = order.indexOf(ev.id);
+      return `<button class="tl-item${k >= 0 ? " picked" : ""}" data-id="${ev.id}" ${k >= 0 || finished ? "disabled" : ""}>
+        ${k >= 0 ? `<b class="tl-badge">${k + 1}</b>` : `<b class="tl-badge empty"></b>`}<span>${esc(ev.t)}</span></button>`;
+    }).join("");
+    $("#undo").disabled = finished || order.length === 0;
+  };
+  draw();
+  $("#tl").addEventListener("click", (e) => {
+    const b = e.target.closest(".tl-item");
+    if (!b || finished) return;
+    order.push(b.dataset.id);
+    if (order.length < set.length) { draw(); return; }
+    finished = true;
+    draw();
+    $("#undo").hidden = true;
+    const sorted = [...set].sort((x, y) => x.y - y.y);
+    const right = order.filter((id, i) => id === sorted[i].id).length;
+    const correct = right === set.length;
+    settle({
+      correct, auto: false,
+      show: { icon: correct ? "✓" : "✗", title: "Zeitstrahl", sub: `${right} von ${set.length} an der richtigen Stelle` },
+      feedback: `<div class="fb-text"><p><strong>${right} von ${set.length}</strong> an der richtigen Stelle.</p>
+        <ol class="tl-result">${sorted.map((ev, i) => `<li class="${order[i] === ev.id ? "ok" : "no"}"><b>${fmtYear(ev.y)}</b> ${esc(ev.t)}</li>`).join("")}</ol></div>`,
+      after: () => { const qb = $("#quiz-body"); qb.scrollTop = qb.scrollHeight; },
+    });
+  });
+  $("#undo").addEventListener("click", () => { if (!finished) { order.pop(); draw(); } });
+}
+
+/* ---------- Wer war das? ---------- */
+const discovered = () => store.get("people", []);
+function discover(id) {
+  const list = discovered();
+  if (!list.includes(id)) { list.push(id); store.set("people", list); }
+}
+
+function whoOptions(p) {
+  const others = CONTENT.people.filter((x) => x.id !== p.id);
+  const same = shuffle(others.filter((x) => x.topic === p.topic));
+  const near = shuffle(others.filter((x) => x.era === p.era && !same.includes(x)));
+  const rest = shuffle(others.filter((x) => !same.includes(x) && !near.includes(x)));
+  return shuffle([p, ...[...same.slice(0, 2), ...near, ...rest].slice(0, 3)]);
+}
+
+function renderWho(p) {
+  const opts = whoOptions(p);
+  let shown = 1, done = false;
+  $("#quiz-body").innerHTML = `
+    <div class="prompt"><p class="prompt-label">Wer war das?</p>
+      <ol class="hints" id="hints"></ol>
+      <button class="btn ghost small" id="more" type="button">Nächster Hinweis</button>
+    </div>
+    <div class="answers" id="who-opts">${opts.map((o) => `<button class="answer" data-id="${o.id}">${esc(o.name)}</button>`).join("")}</div>
+    ${FEEDBACK}`;
+  const drawHints = () => {
+    $("#hints").innerHTML = p.hints.slice(0, shown).map((h, i) => `<li><b>Hinweis ${i + 1}</b>${esc(h)}</li>`).join("");
+    $("#more").hidden = shown >= p.hints.length || done;
+  };
+  drawHints();
+  $("#more").addEventListener("click", () => { if (!done && shown < p.hints.length) { shown++; drawHints(); } });
+  const finish = (correct) => {
+    done = true;
+    $("#more").hidden = true;
+    $("#who-opts").querySelectorAll(".answer").forEach((b) => { b.disabled = true; if (b.dataset.id === p.id) b.classList.add("correct"); });
+    const pts = correct ? Math.max(1, 5 - shown) : 0;
+    saveRec("who", p.id, correct && shown <= 3);
+    discover(p.id);
+    settle({
+      correct, auto: false, pts,
+      show: { icon: initials(p.name), title: p.name, sub: correct ? `${shown} Hinweis${shown > 1 ? "e" : ""} gebraucht` : "nicht erkannt" },
+      feedback: `<p><strong>${esc(p.name)}</strong><br>${lifeSpan(p)} · ${correct ? `${pts} Punkte` : "leider nicht erkannt"}</p>
+        <button class="btn ghost" id="open-profile" type="button">Profil</button>`,
+      after: () => $("#open-profile").addEventListener("click", () => openProfile(p.id)),
+    });
+  };
+  $("#who-opts").addEventListener("click", (e) => {
+    const b = e.target.closest(".answer");
+    if (!b || done || b.disabled) return;
+    if (b.dataset.id === p.id) return finish(true);
+    b.classList.add("wrong"); b.disabled = true;
+    if (shown < p.hints.length) { shown++; drawHints(); }
+    else finish(false);
+  });
+}
+
+/* ---------- Profile und Atlas (Overlay) ---------- */
+const sheetStack = [];
+function openSheet(render) {
+  sheetStack.push(render);
+  $("#sheet").hidden = false;
+  document.body.style.overflow = "hidden";
+  render();
+  $("#sheet-body").scrollTop = 0;
+}
+function sheetBack() {
+  sheetStack.pop();
+  if (sheetStack.length) { sheetStack[sheetStack.length - 1](); return; }
+  $("#sheet").hidden = true;
+  document.body.style.overflow = $("#quiz").hidden ? "" : "hidden";
+  renderLearn();
+}
+$("#sheet-back").addEventListener("click", sheetBack);
+const openProfile = (id) => openSheet(() => profileView(id));
+
+function profileView(id) {
+  const p = PEOPLE[id];
+  discover(id);
+  $("#sheet-title").textContent = "Profil";
+  const rel = p.rel.map((r) => PEOPLE[r]).filter(Boolean);
+  $("#sheet-body").innerHTML = `
+    <div class="profile">
+      <div class="avatar" aria-hidden="true">${esc(initials(p.name))}</div>
+      <h2 class="profile-name">${esc(p.name)}</h2>
+      <p class="profile-meta">${esc(p.role)}<br>${lifeSpan(p)}</p>
+      <p class="profile-tags"><span class="cat">${ERA_LABEL[p.era]}</span><span class="cat">${PTOPIC_LABEL[p.topic]}</span></p>
+      <h3>Kurz erklärt</h3><p>${esc(p.short)}</p>
+      <h3>Hintergrund</h3><p>${esc(p.bg)}</p>
+      <h3>Weiter entdecken</h3>
+      <div class="rabbit">${rel.map((r) => `<button class="atlas-row" data-id="${r.id}"><span class="avatar sm" aria-hidden="true">${esc(initials(r.name))}</span><span><strong>${esc(r.name)}</strong><span class="muted">${lifeSpan(r)}</span></span></button>`).join("")}</div>
+      <a class="btn ghost wide wiki" href="https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(p.name)}" target="_blank" rel="noopener">Bei Wikipedia lesen</a>
+    </div>`;
+  $("#sheet-body").querySelectorAll(".rabbit .atlas-row").forEach((b) => b.addEventListener("click", () => openProfile(b.dataset.id)));
+}
+
+let atlasBy = "era";
+function atlasView() {
+  $("#sheet-title").textContent = "Personen-Atlas";
+  const seen = new Set(discovered());
+  const all = CONTENT.people;
+  const groups = atlasBy === "era"
+    ? Object.entries(ERA_LABEL).map(([k, label]) => [label, all.filter((p) => p.era === k)])
+    : Object.entries(PTOPIC_LABEL).map(([k, label]) => [label, all.filter((p) => p.topic === k)]);
+  $("#sheet-body").innerHTML = `
+    <p class="page-sub">${seen.size} von ${all.length} Personen entdeckt. Neue Personen findest du im Spiel „Wer war das?“.</p>
+    <div class="segmented two" role="tablist" aria-label="Sortierung">
+      <button role="tab" data-by="era" aria-selected="${atlasBy === "era"}">Nach Epoche</button>
+      <button role="tab" data-by="topic" aria-selected="${atlasBy === "topic"}">Nach Thema</button>
+    </div>
+    ${groups.map(([label, list]) => {
+      const sorted = list.slice().sort((a, b) => a.b - b.b);
+      const mine = sorted.filter((p) => seen.has(p.id));
+      return `<h3 class="atlas-group">${label} <span class="muted">${mine.length}/${list.length}</span></h3>
+        ${mine.map((p) => `<button class="atlas-row" data-id="${p.id}"><span class="avatar sm" aria-hidden="true">${esc(initials(p.name))}</span><span><strong>${esc(p.name)}</strong><span class="muted">${lifeSpan(p)}</span></span></button>`).join("")}
+        ${list.length > mine.length ? `<p class="muted atlas-locked">${list.length - mine.length} noch unbekannt</p>` : ""}`;
+    }).join("")}`;
+  $("#sheet-body").querySelectorAll(".atlas-row").forEach((b) => b.addEventListener("click", () => openProfile(b.dataset.id)));
+  $("#sheet-body").querySelectorAll("[data-by]").forEach((b) => b.addEventListener("click", () => { atlasBy = b.dataset.by; atlasView(); }));
+}
+
+/* ---------- Tagesstapel ---------- */
+const DECK_SIZE = 10;
+function buildDeck() {
+  const now = Date.now();
+  const cards = CONTENT.cards;
+  const due = shuffle(cards.filter((c) => { const r = rec("cards", c.id); return r && r.box < 5 && r.due <= now; }))
+    .sort((a, b) => rec("cards", a.id).box - rec("cards", b.id).box).slice(0, 4);
+  const fresh = shuffle(cards.filter((c) => !rec("cards", c.id)));
+  const rest = shuffle(cards.filter((c) => !due.includes(c) && !fresh.includes(c)))
+    .sort((a, b) => rec("cards", a.id).due - rec("cards", b.id).due);
+  const out = [...due];
+  for (const list of [fresh, rest]) for (const c of list) if (out.length < DECK_SIZE && !out.includes(c)) out.push(c);
+  return { ids: shuffle(out).map((c) => c.id), reviews: due.length };
+}
+function deckState() {
+  let d = store.get("deck", null);
+  const valid = d && d.day === dayKey() && Array.isArray(d.ids) && d.ids.length && d.ids.every((id) => CARD[id]);
+  if (!valid) {
+    const built = buildDeck();
+    d = { day: dayKey(), ids: built.ids, reviews: built.reviews, results: [], pos: 0 };
+    store.set("deck", d);
+  }
+  return d;
+}
+
+function startDeck() {
+  clearTimeout(nextTimer);
+  const d = deckState();
+  const cards = d.ids.map((id) => CARD[id]);
+  const results = d.results.map((ok, i) => ({ correct: ok, show: { icon: ok ? "✓" : "✗", title: cards[i].t, sub: cards[i].x }, pts: 0 }));
+  quiz = { mode: DECK, questions: cards, i: Math.min(d.pos, cards.length), results, points: 0 };
+  showQuiz();
+  renderModeSwitcher();
+  if (d.pos >= cards.length) renderResult();
+  else renderQuestion();
+}
+
+function renderDeck(card) {
+  $("#quiz-body").innerHTML = `
+    <div class="card-face">
+      <p class="card-topic"><span class="cat">${CTOPIC_LABEL[card.topic]}</span></p>
+      <h2 class="card-title">${esc(card.t)}</h2>
+      <p class="card-text">${esc(card.x)}</p>
+      <p class="card-why"><b>Warum wichtig:</b> ${esc(card.w)}</p>
+    </div>
+    <div class="card-actions"><button class="btn wide" id="to-q" type="button">Zur Frage</button></div>`;
+  $("#to-q").addEventListener("click", () => {
+    const opts = shuffle(card.o.map((text, i) => ({ text, ok: i === 0 })));
+    $("#quiz-body").innerHTML = `
+      <div class="prompt"><p class="prompt-label">${esc(card.t)}</p><h2 class="prompt-statement">${esc(card.q)}</h2></div>
+      <div class="answers">${opts.map((o, i) => `<button class="answer" data-i="${i}">${esc(o.text)}</button>`).join("")}</div>
+      ${FEEDBACK}`;
+    $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
+      const correct = opts[Number(btn.dataset.i)].ok;
+      $("#quiz-body").querySelectorAll(".answer").forEach((b, i) => { b.disabled = true; if (opts[i].ok) b.classList.add("correct"); });
+      if (!correct) btn.classList.add("wrong");
+      saveRec("cards", card.id, correct);
+      const d = deckState();
+      d.results[quiz.i] = correct;
+      d.pos = Math.max(d.pos, quiz.i + 1);
+      store.set("deck", d);
+      settle({
+        correct,
+        show: { icon: "✗", title: card.t, sub: card.o[0] },
+        feedback: correct ? "" : `<p>Richtig wäre <strong>${esc(card.o[0])}</strong></p>`,
+      });
+    }, { once: true }));
+  });
+}
+
+/* ---------- Ergebnis ---------- */
 function renderResult() {
   const { mode, results } = quiz;
   const score = results.filter((r) => r.correct).length;
   const total = results.length;
   if (!activity.includes(dayKey())) { activity.push(dayKey()); activity = activity.slice(-400); store.set("activity", activity); }
+  if (mode.id !== "cards") {
+    const best = store.get("best", {});
+    if ((best[mode.id] ?? -1) < score) { best[mode.id] = score; store.set("best", best); }
+  }
 
   const msg =
-    score === total ? "Fehlerfrei. Die Fragen kommen erst in ein paar Tagen wieder." :
-    score >= total * 0.7 ? "Gute Runde. Die Fehler kommen in der nächsten Runde wieder dran." :
-    "Die falschen Antworten kommen gleich in der nächsten Runde wieder. So bleibt es hängen.";
+    mode.noAgain ? "Für heute reicht es. Morgen warten 10 neue Karten, falsche Antworten kommen dazwischen wieder." :
+    mode.sr
+      ? (score === total ? "Fehlerfrei. Die Fragen kommen erst in ein paar Tagen wieder."
+        : score >= total * 0.7 ? "Gute Runde. Die Fehler kommen in der nächsten Runde wieder dran."
+        : "Die falschen Antworten kommen gleich in der nächsten Runde wieder. So bleibt es hängen.")
+      : (score === total ? "Fehlerfrei. Noch eine Runde?" : score >= total * 0.7 ? "Gute Runde." : "Noch Luft nach oben. Ein neuer Durchgang bringt neue Aufgaben.");
 
   const wrong = results.filter((r) => !r.correct);
   renderDots();
@@ -535,30 +1064,43 @@ function renderResult() {
   $("#quiz-body").innerHTML = `
     <div class="result">
       <p class="result-score">${score}<small> von ${total}</small></p>
+      ${mode.scored && quiz.points ? `<p class="result-points">${quiz.points} Punkte</p>` : ""}
       <p class="result-msg">${msg}</p>
       ${wrong.length ? `<ul class="mistakes">${wrong.map((r) => `
-        <li><span class="f">${r.target.flag}</span>
-          <div><strong>${esc(r.target.name)}</strong><span>${mode.id.startsWith("capital") ? "Hauptstadt " + esc(r.target.capital) : "Deine Wahl: " + esc(r.chosen.name)}</span></div>
+        <li><span class="f">${esc(r.show.icon)}</span>
+          <div><strong>${esc(r.show.title)}</strong>${r.show.sub ? `<span>${esc(r.show.sub)}</span>` : ""}</div>
         </li>`).join("")}</ul>` : ""}
     </div>
-    <div class="result-actions">
+    <div class="result-actions${mode.noAgain ? " single" : ""}">
       <button class="btn ghost" id="done">Fertig</button>
-      <button class="btn" id="again">Nächste Runde</button>
+      ${mode.noAgain ? "" : `<button class="btn" id="again">Nächste Runde</button>`}
     </div>`;
   $("#done").addEventListener("click", closeQuiz);
-  $("#again").addEventListener("click", () => startQuiz(mode));
+  $("#again")?.addEventListener("click", () => startQuiz(mode));
 }
 
 /* ---------- Start ---------- */
 async function init() {
   showTab(currentTab);
   loadNews();
+  const get = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(u); return r.json(); });
   try {
-    countries = await (await fetch("countries.json")).json();
-    renderLearn();
+    countries = await get("countries.json");
   } catch {
     $("#modes").innerHTML = `<div class="empty"><strong>Länderdaten fehlen</strong>Die Datei countries.json konnte nicht geladen werden.</div>`;
   }
+  try {
+    CONTENT = await get("content.json");
+    CONTENT.people.forEach((p) => { PEOPLE[p.id] = p; });
+    CONTENT.cards.forEach((c) => { CARD[c.id] = c; });
+  } catch { CONTENT = null; }
+  try {
+    MAPD = await get("map.json");
+    MAPD.countries.forEach((m) => { if (m.i) MAPIDX[m.i] = { s: Math.max(m.s, MAPIDX[m.i]?.s || 0) }; });
+    const inQuiz = new Set(countries.map((c) => c.id));
+    MAP_MARKUP = MAPD.countries.map((m) => `<path class="land${m.i && inQuiz.has(m.i) ? "" : " bg"}" data-id="${m.i || ""}" d="${m.d}"/>`).join("");
+  } catch { MAPD = null; }
+  renderLearn();
   if ("serviceWorker" in navigator && location.protocol === "https:") {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
