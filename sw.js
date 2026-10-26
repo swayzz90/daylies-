@@ -2,7 +2,7 @@
 const VERSION = "db-__BUILD__";
 const SHELL = [
   "./", "index.html", "style.css", "app.js", "manifest.webmanifest",
-  "countries.json", "content.json", "map.json",
+  "countries.json", "content.json", "chemie.json", "map.json",
   "bricolage-grotesque-latin-500-normal.woff2",
   "bricolage-grotesque-latin-700-normal.woff2",
   "bricolage-grotesque-latin-800-normal.woff2",
@@ -16,7 +16,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== "portraits-v1").map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("db-") && k !== VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

@@ -304,6 +304,7 @@ document.addEventListener("visibilitychange", () => {
 let countries = [];
 let CONTENT = null;        // Ereignisse, Aussagen, Karten, Personen (content.json)
 let MAPD = null;           // Weltkarte (map.json)
+let CHEM = null;           // Chemielabor-Aufgaben (aus chemie.json gebaut)
 let MAP_MARKUP = "";
 const PEOPLE = {};         // id -> Person
 let PORTRAITS = {};        // id -> { file, artist, license, page, v } (portraits/portraits.json)
@@ -390,6 +391,16 @@ const GAMES = [
     pick: () => pickRoutes() },
   { id: "face", kind: "face", title: "Gesichter", sub: "Porträt sehen, Person wählen", icon: "🖼️", sr: true, short: "Gesichter", know: true,
     avail: () => hasPhotos(), pick: () => pickFrom("face", CONTENT.people.filter((p) => photoUrl(p.id))) },
+  { id: "c-salt", kind: "chem", group: "chem", title: "Salzbaukasten", sub: "Ionen zu Formel und Name", icon: "NaCl", iconText: true, sr: true, short: "Salze",
+    avail: () => !!CHEM, pool: () => CHEM.salt, pick: () => pickFrom("c-salt", CHEM.salt) },
+  { id: "c-redox", kind: "chem", group: "chem", title: "Redox", sub: "Oxidationszahlen, Elektronen, Spannungsreihe", icon: "e⁻", iconText: true, sr: true, short: "Redox",
+    avail: () => !!CHEM, pool: () => CHEM.redox, pick: () => pickFrom("c-redox", CHEM.redox) },
+  { id: "c-sb", kind: "chem", group: "chem", title: "Säuren und Basen", sub: "Formeln, Abkürzungen, Paare, pH", icon: "pH", iconText: true, sr: true, short: "Säure/Base",
+    avail: () => !!CHEM, pool: () => CHEM.sb, pick: () => pickFrom("c-sb", CHEM.sb) },
+  { id: "c-titr", kind: "chem", group: "chem", title: "Titrationskurve", sub: "Kurve lesen, Indikator wählen", icon: "📈", sr: true, short: "Titration",
+    avail: () => !!CHEM, pool: () => CHEM.titr, pick: () => pickFrom("c-titr", CHEM.titr) },
+  { id: "c-analytik", kind: "chem", group: "chem", title: "Analytik-Detektiv", sub: "Methode wählen, IR und NMR deuten", icon: "IR", iconText: true, sr: true, short: "Analytik",
+    avail: () => !!CHEM, pool: () => CHEM.analytik, pick: () => pickFrom("c-analytik", CHEM.analytik) },
 ];
 const DECK = { id: "cards", kind: "deck", title: "Tagesstapel", sr: true, noAgain: true, short: "Tagesstapel" };
 const gameById = (id) => GAMES.find((g) => g.id === id);
@@ -500,6 +511,7 @@ function gameStats(g) {
   else if (g.id === "who") list = CONTENT?.people;
   else if (g.id === "face") list = CONTENT?.people.filter((p) => photoUrl(p.id));
   else if (g.id === "quote") list = CONTENT?.quotes;
+  else if (g.pool) list = g.pool();
   if (list) {
     const mastered = list.filter((x) => (rec(g.id, x.id)?.box ?? 0) >= MASTERED).length;
     const due = list.filter((x) => { const r = rec(g.id, x.id); return r && r.box < 5 && r.due <= now; }).length;
@@ -558,6 +570,10 @@ function renderLearn() {
   } else {
     $("#deck-row").innerHTML = ""; $("#atlas-row").innerHTML = "";
     know.innerHTML = `<div class="empty"><strong>Inhalte fehlen</strong>Die Datei content.json konnte nicht geladen werden.</div>`;
+  }
+
+  if (CHEM) {
+    know.insertAdjacentHTML("beforeend", `<h2 class="section-title chem-title">Chemie</h2>${GAMES.filter((g) => g.group === "chem").map(gameRow).join("")}`);
   }
 
   // Welt-Quiz
@@ -648,7 +664,7 @@ function renderDots() {
 
 const RENDER = {
   country: (t) => renderCountry(t), map: (t) => renderMap(t), tf: (t) => renderTF(t), before: (t) => renderBefore(t),
-  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), deck: (t) => renderDeck(t), face: (t) => renderFace(t), duel: (t) => renderDuel(t), quote: (t) => renderQuote(t), links: (t) => renderLinks(t),
+  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), deck: (t) => renderDeck(t), face: (t) => renderFace(t), duel: (t) => renderDuel(t), quote: (t) => renderQuote(t), links: (t) => renderLinks(t), chem: (t) => renderChem(t),
   who: (t) => (t.mode === "learn" ? renderLearnCard(t) : renderAkte(t)),
 };
 function renderQuestion() {
@@ -1445,6 +1461,256 @@ function renderResult() {
   $("#again")?.addEventListener("click", () => startQuiz(mode));
 }
 
+/* =================================================================
+   CHEMIELABOR (Daten: chemie.json)
+   Alle Aufgaben sind Auswahlfragen: o[0] ist die richtige Antwort, die Reihenfolge wird beim Anzeigen gemischt.
+   ================================================================= */
+/*CHEM-PURE-START*/
+const SUBD = "₀₁₂₃₄₅₆₇₈₉", SUPD = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+const sub = (s) => String(s).replace(/\d/g, (d) => SUBD[d]);
+const supCharge = (z, plus) => (z > 1 ? String(z).replace(/\d/g, (d) => SUPD[d]) : "") + (plus ? "⁺" : "⁻");
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+const pickN = (arr, n) => shuffle(arr).slice(0, n);
+
+// Formel eines Salzes: Klammern nur bei Mehratom-Ionen mit Index
+const saltPart = (form, n, poly) => (n === 1 ? sub(form) : (poly ? `(${sub(form)})` : sub(form)) + sub(n));
+const saltFormula = (c, a, nC, nA) => saltPart(c.form, nC, c.poly) + saltPart(a.form, nA, a.poly);
+const ionLabel = (x, plus) => sub(x.form) + supCharge(x.z, plus);
+const saltName = (c, a) => { const an = a.name.toLowerCase(); return c.name.includes("(") ? `${c.name}-${an}` : c.name + an; };
+const saltAllowed = (c, a) => (!a.only || a.only.includes(c.id)) && !(a.deny || []).includes(c.id);
+
+function buildSaltPool(D) {
+  const pool = [];
+  for (const c of D.cations) for (const a of D.anions) {
+    if (!saltAllowed(c, a)) continue;
+    const g = gcd(c.z, a.z), nC = a.z / g, nA = c.z / g;
+    pool.push({
+      id: `${c.id}|${a.id}`, c, a, nC, nA,
+      formula: saltFormula(c, a, nC, nA), name: saltName(c, a),
+    });
+  }
+  pool.forEach((it) => {
+    it.build = () => (Math.random() < 0.5 ? saltToFormula(it) : saltToName(it, pool));
+  });
+  return pool;
+}
+function saltToFormula(it) {
+  const { c, a, nC, nA, formula } = it;
+  const cand = [[nA, nC], [1, 1], [nC * 2, nA * 2], [nC, 1], [1, nA], [nC + 1, nA], [nC, nA + 1]]
+    .map(([x, y]) => saltFormula(c, a, x, y));
+  const wrong = [...new Set(cand.filter((f) => f !== formula))];
+  return {
+    label: "Welche Formel hat das Salz?", q: `${ionLabel(c, true)}  +  ${ionLabel(a, false)}`,
+    t: `${ionLabel(c, true)} + ${ionLabel(a, false)}`, o: [formula, ...pickN(wrong, 3)],
+    e: `${ionLabel(c, true)} und ${ionLabel(a, false)} müssen sich in der Ladung ausgleichen: ${nC} × ${c.z}+ = ${nA} × ${a.z}−. Das Salz heißt ${it.name}.`,
+  };
+}
+function saltToName(it, pool) {
+  const near = pool.filter((p) => p !== it && p.name !== it.name && (p.c === it.c || p.a === it.a));
+  const names = [...new Set(near.map((p) => p.name))];
+  return {
+    label: "Wie heißt das Salz?", q: it.formula, t: it.formula, o: [it.name, ...pickN(names, 3)],
+    e: `${it.formula} besteht aus ${ionLabel(it.c, true)} und ${ionLabel(it.a, false)}.`,
+  };
+}
+
+// Säuren, Basen, Abkürzungen, konjugierte Paare
+function buildSbPool(D) {
+  const pool = [];
+  const groups = {
+    saeure: "Säure", base: "Base", trivial: "Trivialname",
+  };
+  for (const s of D.stoffe) {
+    const same = D.stoffe.filter((x) => x.g === s.g && x.f !== s.f && x.n !== s.n);
+    const sameDistinct = (key) => [...new Set(same.map((x) => x[key]))];
+    pool.push({
+      id: `n:${s.id}`,
+      build: () => ({
+        label: groups[s.g] === "Trivialname" ? "Trivialname: welche Formel?" : "Welche Formel?", q: s.n, t: s.n,
+        o: [s.f, ...pickN(sameDistinct("f"), 3)], e: `${s.n} hat die Formel ${s.f}.`,
+      }),
+    });
+    pool.push({
+      id: `f:${s.id}`,
+      build: () => ({
+        label: groups[s.g] === "Trivialname" ? "Trivialname: welcher Stoff?" : "Wie heißt der Stoff?", q: s.f, t: s.f,
+        o: [s.n, ...pickN(sameDistinct("n"), 3)], e: `${s.f} ist ${s.n}.`,
+      }),
+    });
+  }
+  for (const x of D.abk) {
+    pool.push({
+      id: x.id,
+      build: () => ({
+        label: "Was bedeutet die Abkürzung?", q: x.ab, t: x.ab,
+        o: [x.m, ...pickN(D.abk.filter((y) => y.m !== x.m).map((y) => y.m), 3)], e: `${x.ab} steht für ${x.m}.`,
+      }),
+    });
+  }
+  const all = [...new Set(D.pairs.flat())];
+  D.pairs.forEach(([acid, base], i) => {
+    pool.push({
+      id: `ks:${i}`,
+      build: () => ({
+        label: "Konjugiertes Paar", q: `Was ist die konjugierte Base von ${acid}?`, t: `Konjugierte Base von ${acid}`,
+        o: [base, ...pickN(all.filter((x) => x !== base && x !== acid), 3)],
+        e: `${acid} gibt ein Proton ab und wird zu ${base}.`,
+      }),
+    });
+    pool.push({
+      id: `ka:${i}`,
+      build: () => ({
+        label: "Konjugiertes Paar", q: `Was ist die konjugierte Säure von ${base}?`, t: `Konjugierte Säure von ${base}`,
+        o: [acid, ...pickN(all.filter((x) => x !== acid && x !== base), 3)],
+        e: `${base} nimmt ein Proton auf und wird zu ${acid}.`,
+      }),
+    });
+  });
+  for (const x of D.sb) pool.push(x);
+  return pool;
+}
+
+// Titrationskurve: Säure (pKs oder null = stark) mit starker Base, x = n(Base) / n(Säure), c = 0,1 mol/L
+function titrationPH(pks, x, c = 0.1) {
+  const Ka = pks == null ? 1e8 : Math.pow(10, -pks), Kw = 1e-14;
+  const cNa = (c * x) / (1 + x), cA = c / (1 + x);
+  const f = (lh) => { const h = Math.pow(10, lh); return cNa + h - (cA * Ka) / (Ka + h) - Kw / h; };
+  let lo = -14, hi = 1;
+  for (let i = 0; i < 80; i++) { const mid = (lo + hi) / 2; if (f(mid) > 0) hi = mid; else lo = mid; }
+  return -(lo + hi) / 2;
+}
+
+function titrationSvg(pks) {
+  const W = 320, H = 210, L = 34, R = 10, T = 10, B = 40;
+  const X = (x) => L + (x / 2) * (W - L - R), Y = (ph) => T + (1 - ph / 14) * (H - T - B);
+  const xs = [];
+  for (let x = 0; x < 0.9; x += 0.02) xs.push(x);
+  for (let x = 0.9; x < 1.1; x += 0.002) xs.push(x);
+  for (let x = 1.1; x <= 2.0001; x += 0.02) xs.push(x);
+  const path = xs.map((x, i) => `${i ? "L" : "M"}${X(x).toFixed(1)} ${Y(titrationPH(pks, x)).toFixed(1)}`).join("");
+  let grid = "";
+  for (let ph = 0; ph <= 14; ph += 2) {
+    grid += `<line x1="${L}" x2="${W - R}" y1="${Y(ph)}" y2="${Y(ph)}" stroke="var(--line)" stroke-width="1"/>` +
+      `<text x="${L - 6}" y="${Y(ph) + 3.5}" text-anchor="end" font-size="10" fill="var(--muted)">${ph}</text>`;
+  }
+  for (const x of [0, 0.5, 1, 1.5, 2]) {
+    grid += `<line x1="${X(x)}" x2="${X(x)}" y1="${T}" y2="${H - B}" stroke="var(--line)" stroke-width="1"/>` +
+      `<text x="${X(x)}" y="${H - B + 14}" text-anchor="middle" font-size="10" fill="var(--muted)">${x}</text>`;
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Titrationskurve: pH gegen zugegebene Basenmenge">
+    ${grid}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linejoin="round"/>
+    <text x="${(L + W - R) / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--muted)">x = n(Base) / n(Säure)</text>
+    <text x="${L + 6}" y="${T + 12}" font-size="10" fill="var(--muted)">pH</text></svg>`;
+}
+
+// IR-Spektrum aus Banden [Wellenzahl, Breite, Tiefe]
+const IR_ALKYL = [[2930, 40, 0.55], [2860, 20, 0.4], [1460, 25, 0.35], [1375, 10, 0.25]];
+function irSvg(item) {
+  const bands = [...(item.base ? IR_ALKYL : []), ...item.bands];
+  const W = 320, H = 190, L = 12, R = 10, T = 10, B = 36;
+  const X = (wn) => L + ((4000 - wn) / 3500) * (W - L - R), Y = (t) => T + (1 - t) * (H - T - B);
+  const pts = [];
+  for (let wn = 4000; wn >= 500; wn -= 5) {
+    let t = 0.97;
+    for (const [c, w, d] of bands) t *= 1 - d * Math.exp(-Math.pow((wn - c) / w, 2));
+    pts.push(`${pts.length ? "L" : "M"}${X(wn).toFixed(1)} ${Y(Math.max(0.03, t)).toFixed(1)}`);
+  }
+  let grid = "";
+  for (const wn of [4000, 3000, 2000, 1500, 1000, 500]) {
+    grid += `<line x1="${X(wn)}" x2="${X(wn)}" y1="${T}" y2="${H - B}" stroke="var(--line)" stroke-width="1"/>` +
+      `<text x="${X(wn)}" y="${H - B + 14}" text-anchor="${wn === 4000 ? "start" : wn === 500 ? "end" : "middle"}" font-size="10" fill="var(--muted)">${wn}</text>`;
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="IR-Spektrum">
+    ${grid}<line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" stroke="var(--muted)" stroke-width="1"/>
+    <path d="${pts.join("")}" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>
+    <text x="${(L + W - R) / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--muted)">Wellenzahl in cm⁻¹ (Durchlässigkeit nach oben)</text></svg>`;
+}
+
+// ¹H-NMR-Strichspektrum aus Signalen [δ, Muster, Zahl der H]
+const NMR_PAT = { s: [1], d: [1, 1], t: [1, 2, 1], q: [1, 3, 3, 1], sept: [1, 6, 15, 20, 15, 6, 1], m: [2, 3, 4, 3, 2] };
+function nmrSvg(signals) {
+  const W = 320, H = 170, L = 12, R = 12, T = 22, B = 34;
+  const X = (ppm) => L + ((12 - ppm) / 12) * (W - L - R), base = H - B;
+  const J = 0.1;
+  let raw = 0;
+  const sigs = signals.map(([d, m, h]) => {
+    const p = NMR_PAT[m], sum = p.reduce((a, b) => a + b, 0);
+    const lines = p.map((v, i) => ({ x: d + (i - (p.length - 1) / 2) * J, a: (h * v) / sum }));
+    raw = Math.max(raw, ...lines.map((l) => l.a));
+    return { d, h, lines };
+  });
+  const k = (base - T - 14) / raw;
+  let g = "", txt = "";
+  for (const s of sigs) {
+    let top = base;
+    for (const l of s.lines) {
+      const y = base - Math.max(2, l.a * k);
+      top = Math.min(top, y);
+      g += `<line x1="${X(l.x).toFixed(1)}" x2="${X(l.x).toFixed(1)}" y1="${base}" y2="${y.toFixed(1)}" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round"/>`;
+    }
+    txt += `<text x="${X(s.d).toFixed(1)}" y="${(top - 5).toFixed(1)}" text-anchor="middle" font-size="10" fill="var(--ink)">${s.h} H</text>`;
+  }
+  let grid = "";
+  for (const ppm of [12, 10, 8, 6, 4, 2, 0]) {
+    grid += `<line x1="${X(ppm)}" x2="${X(ppm)}" y1="${base}" y2="${base + 4}" stroke="var(--muted)"/>` +
+      `<text x="${X(ppm)}" y="${base + 16}" text-anchor="middle" font-size="10" fill="var(--muted)">${ppm}</text>`;
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="¹H-NMR-Spektrum">
+    <line x1="${L}" x2="${W - R}" y1="${base}" y2="${base}" stroke="var(--muted)" stroke-width="1"/>${g}${txt}${grid}
+    <text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--muted)">δ in ppm (Zahl über dem Signal: relative H-Zahl)</text></svg>`;
+}
+
+function buildChem(D) {
+  const irPool = D.ir.map((x) => ({
+    id: x.id,
+    build: () => ({ label: "IR-Spektrum", fig: irSvg(x), q: "Welche funktionelle Gruppe oder Verbindungsklasse passt zum Spektrum?", t: "IR-Spektrum deuten", o: x.o, e: x.e }),
+  }));
+  const nmrPool = D.nmr.map((x) => ({
+    id: x.id,
+    build: () => ({
+      label: "¹H-NMR-Spektrum", fig: nmrSvg(x.s), q: "Welche Verbindung gehört zu diesem Spektrum?", t: "¹H-NMR-Spektrum deuten",
+      o: [x.name, ...pickN(D.nmr.filter((y) => y.name !== x.name).map((y) => y.name), 3)], e: x.e,
+    }),
+  }));
+  const titr = D.titration.map((x) => ({
+    id: x.id,
+    build: () => ({ label: x.label, fig: titrationSvg(x.pks), q: x.q, t: `Titrationskurve: ${x.q}`, o: x.o, e: x.e }),
+  }));
+  return {
+    salt: buildSaltPool(D),
+    redox: D.redox,
+    sb: buildSbPool(D),
+    titr,
+    analytik: [...D.analytik, ...irPool, ...nmrPool],
+  };
+}
+/*CHEM-PURE-END*/
+
+function renderChem(item) {
+  const q = item.build ? item.build() : item;
+  const opts = shuffle(q.o.map((t, i) => ({ t, ok: i === 0 })));
+  $("#quiz-body").innerHTML = `
+    <div class="prompt chem-prompt">
+      ${q.label ? `<p class="prompt-label">${esc(q.label)}</p>` : ""}
+      ${q.fig ? `<div class="chem-fig">${q.fig}</div>` : ""}
+      ${q.ctx ? `<p class="chem-ctx">${esc(q.ctx)}</p>` : ""}
+      <h2 class="prompt-statement chem-q">${esc(q.q)}</h2>
+    </div>
+    <div class="answers">${opts.map((o, i) => `<button class="answer chem-a" data-i="${i}">${esc(o.t)}</button>`).join("")}</div>
+    ${FEEDBACK}`;
+  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
+    const correct = opts[Number(btn.dataset.i)].ok;
+    $("#quiz-body").querySelectorAll(".answer").forEach((b, i) => { b.disabled = true; if (opts[i].ok) b.classList.add("correct"); });
+    if (!correct) btn.classList.add("wrong");
+    saveRec(quiz.mode.id, item.id, correct);
+    settle({
+      correct, auto: false,
+      show: { icon: quiz.mode.iconText ? quiz.mode.icon : "⚗️", title: q.t || q.q, sub: `Richtig: ${q.o[0]}` },
+      feedback: `<div class="fb-text"><p><strong>${esc(q.o[0])}</strong><br><span class="muted">${esc(q.e || "")}</span></p></div>`,
+    });
+  }, { once: true }));
+}
+
 /* ---------- Zurück wischen: vom linken Rand nach rechts ---------- */
 const TAB_ORDER = ["news", "lesen", "learn"];
 function goBack() {
@@ -1512,6 +1778,7 @@ async function init() {
     CONTENT.cards.forEach((c) => { CARD[c.id] = c; });
     buildGraph();
   } catch { CONTENT = null; }
+  try { CHEM = buildChem(await get("chemie.json")); } catch { CHEM = null; }
   try {
     PORTRAITS = (await get("portraits/portraits.json")).items || {};
   } catch { PORTRAITS = {}; }

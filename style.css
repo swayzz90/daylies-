@@ -501,3 +501,15 @@ a.btn { text-decoration: none; display: inline-block; text-align: center; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---------- Chemielabor ---------- */
+.chem-title { margin: 26px 0 2px; }
+.chem-prompt { flex: none; min-height: 0; padding: 12px 0 16px; justify-content: flex-start; }
+.chem-fig { margin: 6px 0 14px; padding: 10px 8px 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.chem-fig svg { display: block; width: 100%; height: auto; }
+.chem-ctx {
+  margin: 4px 0 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; font-size: 1.05rem; line-height: 1.55; overflow-x: auto;
+}
+.chem-q { font-size: clamp(1.3rem, 6vw, 1.7rem); line-height: 1.25; }
+.chem-a { font-size: 1rem; overflow-wrap: anywhere; }
