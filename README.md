@@ -7,11 +7,14 @@ Nachrichten, Lesestoff und Allgemeinwissen statt Scrollen. Eine Web-App (PWA) f�
 - **Sprache:** Deutsche und englische Quellen. Der Knopf neben der Suche wechselt zwischen Alle, DE und EN.
 - **Lernen:** Alle Spiele sind jederzeit spielbar, ohne Tageslimit, und lassen sich mitten in der Runde wechseln.
   - Welt-Quiz: Hauptstädte, Welches Land?, Flaggen, Flagge finden, Karte (Land antippen)
-  - Wissen und Geschichte: Wahr oder falsch, Früher oder später?, Jahr schätzen, Zeitstrahl, Die Akte, Gesichter
+  - Wissen und Geschichte: Wahr oder falsch, Früher oder später?, Jahr schätzen, Zeitstrahl, Die Akte, Gesichter, Zeitgenossen-Duell, Zitat-Rätsel, Verbindungen
   - **Die Akte:** Ein verschwommenes Porträt und geschwärzte Felder (Epoche, Land, Lebensdaten, Beruf, Bekannt für, Hinweis). Jedes aufgedeckte Feld kostet einen Punkt und macht das Foto schärfer. Danach folgt der Steckbrief mit Lebensbalken, bei neuen oder verpassten Personen zusätzlich ein Mini-Check.
   - **Automatische Schwierigkeit:** Sie richtet sich nach dem Lernkasten der Person. Neue Personen lernst du erst kennen (Steckbrief, dann Mini-Check, höchstens 3 pro Runde). Danach gilt Einfach (Epoche und Land offen, ähnliche Antworten leicht auszusortieren), Mittel (nur Epoche offen) und Schwer (nichts offen, Antworten aus demselben Thema und ähnlicher Zeit). Zwei Fehlversuche beenden die Akte.
   - **Gesichter:** Porträt sehen, Namen wählen. Erscheint erst, wenn mindestens 8 Porträts geladen sind.
-  - Personen-Album mit Porträts (Epoche oder Thema), unbekannte Personen bleiben ein Fragezeichen, Rabbit Hole über „Weiter entdecken“
+  - **Zeitgenossen-Duell:** Zwei Personen: Wer wurde früher geboren? Oder vier Personen: Drei lebten zur selben Zeit, wer passt nicht dazu? Danach zeigt ein Diagramm die Lebenszeiten auf einer gemeinsamen Zeitachse.
+  - **Zitat-Rätsel:** Von wem stammt das Zitat? Nur gut belegte Zitate mit Quelle. Ist der Wortlaut nur überliefert, steht das dabei.
+  - **Verbindungen:** Finde über verbundene Personen den Weg von A nach B (2 bis 4 Schritte). Jeder Schritt zeigt, warum die beiden zusammenhängen. Optimaler Weg gibt 6 Punkte, jeder Umweg kostet 2.
+  - Personen-Album mit Porträts (Epoche oder Thema, 104 Personen), unbekannte Personen bleiben ein Fragezeichen, Rabbit Hole über „Weiter entdecken“ mit Begründung je Verbindung
   - Tagesstapel: 10 Wissenskarten pro Tag mit Frage, falsche Antworten kommen später wieder (bewusst begrenzt)
   - Wissenskarte: Die Weltkarte färbt sich, je sicherer du Länder kennst
   - Lernkasten-System (Wiederholung nach 1, 3, 7, 21 Tagen) und Tagesserie
@@ -53,7 +56,7 @@ Im Log der Action steht die Zeile **BEZAHLARTIKEL ENTFERNT**. Dort siehst du, wi
 
 ## Inhalte der Spiele
 
-- `content.json`: 90 Ereignisse, 61 Aussagen, 49 Wissenskarten, 46 Personen (mit Wikipedia-Titel, Land, „bekannt für“ und Mini-Check). Die Texte sind von Hand geschrieben, nur verstorbene Personen. Neue Inhalte kannst du dort ergänzen, die Struktur ist selbsterklärend.
+- `content.json`: 90 Ereignisse, 61 Aussagen, 49 Wissenskarten, 104 Personen (mit Wikipedia-Titel, Land, „bekannt für“ und Mini-Check), 191 Verbindungen zwischen Personen mit Begründung und 26 Zitate mit Quelle. Die Texte sind von Hand geschrieben, nur verstorbene Personen. Neue Inhalte kannst du dort ergänzen, die Struktur ist selbsterklärend.
 - `map.json`: Weltkarte (Natural Earth, öffentlich nutzbar), 194 von 195 Staaten außer Tuvalu.
 - Profile verlinken auf eine Wikipedia-Suche, damit kein Link ins Leere läuft.
 

@@ -292,6 +292,36 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 .tile.locked { opacity: 0.55; }
 .tile.locked .avatar.sq { background: var(--surface); border: 1px dashed var(--line); color: var(--muted); }
 
+/* ---------- Duell, Zitate, Verbindungen ---------- */
+.duel { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 4px 0 10px; }
+.duel-card { display: flex; flex-direction: column; gap: 8px; text-align: left; padding: 8px; border-radius: 16px; background: var(--surface); border: 1.5px solid var(--line); min-width: 0; }
+.duel-card .t-name { font-size: 0.9rem; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.duel-card .avatar.sq { aspect-ratio: 4 / 5; }
+.duel.two .duel-card .avatar.sq { aspect-ratio: 1 / 1; }
+.duel-card.correct { border-color: var(--good); background: var(--good-soft); }
+.duel-card.wrong { border-color: var(--bad); background: var(--bad-soft); }
+.duel-card:disabled { cursor: default; }
+.range { display: grid; gap: 6px; margin-top: 10px; }
+.r-row { display: grid; grid-template-columns: 1fr; gap: 3px; padding: 7px 10px; border-radius: 10px; background: var(--surface); border-left: 4px solid var(--line); }
+.r-row.mark { border-left-color: var(--accent); }
+.r-name { font-size: 0.86rem; font-weight: 700; }
+.r-track { position: relative; height: 8px; border-radius: 99px; background: var(--line); }
+.r-track i { position: absolute; top: 0; bottom: 0; border-radius: 99px; background: var(--muted); min-width: 4px; }
+.r-row.mark .r-track i { background: var(--accent); }
+.r-years { font-size: 0.74rem; color: var(--muted); }
+.quote { margin: 12px 0 0; padding: 4px 0 4px 16px; border-left: 4px solid var(--accent); font-family: var(--display); font-weight: 700; font-size: clamp(1.35rem, 6vw, 1.8rem); line-height: 1.25; letter-spacing: -0.015em; }
+.small { font-size: 0.8rem; margin: 6px 0 0; }
+.route { display: flex; align-items: center; gap: 10px; padding: 4px 0 6px; }
+.route-goal { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.route-goal span { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.route-goal strong { display: block; font-size: 0.95rem; line-height: 1.2; }
+.arrow { color: var(--muted); }
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 2px 0 8px; font-size: 0.82rem; }
+.chain .stop { padding: 3px 9px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.prompt-label.hop { margin: 4px 0 10px; font-size: 1.05rem; color: var(--ink); }
+.answer.neutral { border-color: var(--muted); }
+.atlas-row .why { font-size: 0.8rem; line-height: 1.3; }
+
 /* Ergebnis */
 .result { padding: 24px 0 8px; }
 .result-score {

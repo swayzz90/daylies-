@@ -382,6 +382,12 @@ const GAMES = [
     pick: () => pickSets(5) },
   { id: "who", kind: "who", title: "Die Akte", sub: "Foto enthüllen, Person erraten", icon: "🕵️", sr: true, scored: true, short: "Die Akte", know: true,
     pick: () => pickWho() },
+  { id: "duel", kind: "duel", title: "Zeitgenossen-Duell", sub: "Wer lebte früher, wer passt nicht dazu?", icon: "⚔️", short: "Duell", know: true,
+    pick: () => pickDuels() },
+  { id: "quote", kind: "quote", title: "Zitat-Rätsel", sub: "Von wem stammt das Zitat?", icon: "💬", sr: true, short: "Zitate", know: true,
+    pick: () => pickFrom("quote", CONTENT.quotes) },
+  { id: "links", kind: "links", title: "Verbindungen", sub: "Finde den Weg von Person zu Person", icon: "🕸️", scored: true, short: "Verbindungen", know: true,
+    pick: () => pickRoutes() },
   { id: "face", kind: "face", title: "Gesichter", sub: "Porträt sehen, Person wählen", icon: "🖼️", sr: true, short: "Gesichter", know: true,
     avail: () => hasPhotos(), pick: () => pickFrom("face", CONTENT.people.filter((p) => photoUrl(p.id))) },
 ];
@@ -493,6 +499,7 @@ function gameStats(g) {
   else if (g.id === "tf") list = CONTENT?.facts;
   else if (g.id === "who") list = CONTENT?.people;
   else if (g.id === "face") list = CONTENT?.people.filter((p) => photoUrl(p.id));
+  else if (g.id === "quote") list = CONTENT?.quotes;
   if (list) {
     const mastered = list.filter((x) => (rec(g.id, x.id)?.box ?? 0) >= MASTERED).length;
     const due = list.filter((x) => { const r = rec(g.id, x.id); return r && r.box < 5 && r.due <= now; }).length;
@@ -601,6 +608,7 @@ function startQuiz(game) {
   quiz = { mode: game, questions, i: 0, results: [], points: 0 };
   if (game.kind === "who") preloadPhotos(questions.map((q) => q.p));
   else if (game.kind === "face") preloadPhotos(questions);
+  else if (game.kind === "duel") preloadPhotos(questions.flatMap((q) => q.people));
   showQuiz();
   renderModeSwitcher();
   renderQuestion();
@@ -640,7 +648,7 @@ function renderDots() {
 
 const RENDER = {
   country: (t) => renderCountry(t), map: (t) => renderMap(t), tf: (t) => renderTF(t), before: (t) => renderBefore(t),
-  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), deck: (t) => renderDeck(t), face: (t) => renderFace(t),
+  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), deck: (t) => renderDeck(t), face: (t) => renderFace(t), duel: (t) => renderDuel(t), quote: (t) => renderQuote(t), links: (t) => renderLinks(t),
   who: (t) => (t.mode === "learn" ? renderLearnCard(t) : renderAkte(t)),
 };
 function renderQuestion() {
@@ -1072,6 +1080,197 @@ function renderFace(p) {
   }, { once: true }));
 }
 
+/* ---------- Verbindungsnetz ---------- */
+const NEIGH = {}; // id -> [{ to, w }]
+function buildGraph() {
+  for (const k of Object.keys(NEIGH)) delete NEIGH[k];
+  CONTENT.edges.forEach(({ a, b, w }) => {
+    (NEIGH[a] ??= []).push({ to: b, w });
+    (NEIGH[b] ??= []).push({ to: a, w });
+  });
+}
+function distFrom(src) {
+  const d = { [src]: 0 }, q = [src];
+  for (let i = 0; i < q.length; i++) {
+    for (const { to } of NEIGH[q[i]] || []) if (!(to in d)) { d[to] = d[q[i]] + 1; q.push(to); }
+  }
+  return d;
+}
+const edgeWhy = (a, b) => (NEIGH[a] || []).find((n) => n.to === b)?.w || "";
+function shortestPath(a, b) {
+  const prev = { [a]: null }, q = [a];
+  for (let i = 0; i < q.length && !(b in prev); i++) {
+    for (const { to } of NEIGH[q[i]] || []) if (!(to in prev)) { prev[to] = q[i]; q.push(to); }
+  }
+  const path = [];
+  for (let c = b; c != null; c = prev[c]) path.unshift(c);
+  return path;
+}
+
+/* ---------- Zeitgenossen-Duell ---------- */
+const DUEL_BORN_GAP = 25, DUEL_ODD_GAP = 40;
+function pickDuels(n = 10) {
+  const P = CONTENT.people, out = [];
+  for (let guard = 0; out.length < n && guard < 600; guard++) {
+    if (Math.random() < 0.5) {
+      const [a, b] = shuffle(P).slice(0, 2);
+      if (Math.abs(a.b - b.b) < DUEL_BORN_GAP) continue;
+      out.push({ type: "born", people: [a, b], answer: (a.b < b.b ? a : b).id });
+    } else {
+      const y = P[Math.floor(Math.random() * P.length)].b + 20;
+      const alive = shuffle(P.filter((p) => p.b <= y && y <= p.d));
+      if (alive.length < 3) continue;
+      const three = alive.slice(0, 3);
+      const lo = Math.min(...three.map((p) => p.b)), hi = Math.max(...three.map((p) => p.d));
+      const far = P.filter((p) => p.d < lo - DUEL_ODD_GAP || p.b > hi + DUEL_ODD_GAP);
+      if (!far.length) continue;
+      const odd = far[Math.floor(Math.random() * far.length)];
+      out.push({ type: "odd", people: shuffle([...three, odd]), answer: odd.id });
+    }
+  }
+  return out;
+}
+
+// Lebenszeiten als Balken auf gemeinsamer Zeitachse
+function rangeChart(list, markId) {
+  const lo = Math.min(...list.map((p) => p.b)) - 10, hi = Math.max(...list.map((p) => p.d)) + 10, span = hi - lo;
+  return `<div class="range">${list.slice().sort((a, b) => a.b - b.b).map((p) => `
+    <div class="r-row${p.id === markId ? " mark" : ""}">
+      <span class="r-name">${esc(p.name)}</span>
+      <div class="r-track"><i style="left:${((p.b - lo) / span) * 100}%;width:${Math.max(1.5, ((p.d - p.b) / span) * 100)}%"></i></div>
+      <span class="r-years">${lifeSpan(p)}</span>
+    </div>`).join("")}</div>`;
+}
+
+function renderDuel(q) {
+  const born = q.type === "born";
+  $("#quiz-body").innerHTML = `
+    <div class="prompt short"><p class="prompt-label">${born ? "Wer wurde früher geboren?" : "Drei von ihnen lebten zur selben Zeit. Wer passt nicht dazu?"}</p></div>
+    <div class="duel${born ? " two" : ""}">
+      ${q.people.map((p) => `<button class="duel-card" data-id="${p.id}" type="button">${avatar(p, "sq")}<span class="t-name">${esc(p.name)}</span></button>`).join("")}
+    </div>${FEEDBACK}`;
+  $("#quiz-body").querySelectorAll(".duel-card").forEach((btn) => btn.addEventListener("click", () => {
+    const correct = btn.dataset.id === q.answer;
+    const ans = PEOPLE[q.answer];
+    $("#quiz-body").querySelectorAll(".duel-card").forEach((b) => {
+      b.disabled = true;
+      if (b.dataset.id === q.answer) b.classList.add("correct");
+    });
+    if (!correct) btn.classList.add("wrong");
+    const text = born
+      ? `<strong>${esc(ans.name)}</strong> wurde früher geboren.`
+      : `<strong>${esc(ans.name)}</strong> lebte zu einer ganz anderen Zeit als die drei anderen.`;
+    settle({
+      correct, auto: false,
+      show: { icon: born ? "↔" : "≠", title: q.people.map((p) => p.name).join(", "), sub: born ? `Früher geboren: ${ans.name}` : `Passt nicht dazu: ${ans.name}` },
+      feedback: `<div class="fb-text"><p>${text}</p>${rangeChart(q.people, q.answer)}</div>`,
+    });
+  }, { once: true }));
+}
+
+/* ---------- Zitat-Rätsel ---------- */
+function renderQuote(item) {
+  const p = PEOPLE[item.p];
+  const opts = whoOptions(p, "topic");
+  $("#quiz-body").innerHTML = `
+    <div class="prompt"><p class="prompt-label">Von wem stammt dieses Zitat?</p>
+      <blockquote class="quote">„${esc(item.q)}“</blockquote></div>
+    <div class="answers">${opts.map((o) => `<button class="answer" data-id="${o.id}">${esc(o.name)}</button>`).join("")}</div>
+    ${FEEDBACK}`;
+  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
+    const correct = btn.dataset.id === p.id;
+    $("#quiz-body").querySelectorAll(".answer").forEach((b) => { b.disabled = true; if (b.dataset.id === p.id) b.classList.add("correct"); });
+    if (!correct) btn.classList.add("wrong");
+    saveRec("quote", item.id, correct);
+    discover(p.id);
+    settle({
+      correct, auto: false,
+      show: { icon: initials(p.name), title: `„${item.q}“`, sub: p.name },
+      feedback: `<div class="fb-text"><p><strong>${esc(p.name)}</strong><br><span class="muted">${esc(item.s)}</span></p>
+        ${item.t ? '<p class="muted small">Überliefert: Der genaue Wortlaut ist nicht gesichert.</p>' : ""}</div>
+        <button class="btn ghost" id="open-profile" type="button">Profil</button>`,
+      after: () => $("#open-profile").addEventListener("click", () => openProfile(p.id)),
+    });
+  }, { once: true }));
+}
+
+/* ---------- Verbindungen: Weg von Person A zu Person B ---------- */
+function pickRoutes(n = 5) {
+  const ids = CONTENT.people.map((p) => p.id), out = [], used = new Set();
+  for (let guard = 0; out.length < n && guard < 400; guard++) {
+    const a = ids[Math.floor(Math.random() * ids.length)];
+    if (used.has(a)) continue;
+    const d = distFrom(a);
+    const cands = ids.filter((b) => d[b] >= 2 && d[b] <= 4 && !used.has(b));
+    if (!cands.length) continue;
+    const b = cands[Math.floor(Math.random() * cands.length)];
+    used.add(a); used.add(b);
+    out.push({ a, b, opt: d[b] });
+  }
+  return out;
+}
+
+function renderLinks({ a, b, opt }) {
+  const A = PEOPLE[a], B = PEOPLE[b];
+  const toGoal = distFrom(b);               // Abstand jeder Person zum Ziel
+  const path = [a];
+  const limit = opt + 3;
+  const chain = () => path.map((id) => `<span class="stop">${esc(PEOPLE[id].name)}</span>`).join('<span class="arrow">→</span>');
+  const summary = (ids) => `<ol class="tl-result">${ids.slice(1).map((id, i) => `<li><b>${esc(PEOPLE[ids[i]].name)} → ${esc(PEOPLE[id].name)}</b><br>${esc(edgeWhy(ids[i], id))}</li>`).join("")}</ol>`;
+
+  const draw = () => {
+    const cur = path[path.length - 1];
+    const seen = new Set(path);
+    let options = (NEIGH[cur] || []).map((n) => n.to).filter((id) => !seen.has(id));
+    if (options.length < 2) options = (NEIGH[cur] || []).map((n) => n.to);
+    const good = shuffle(options.filter((id) => toGoal[id] < toGoal[cur]));
+    const rest = shuffle(options.filter((id) => !(toGoal[id] < toGoal[cur])));
+    const shown = shuffle([...good.slice(0, 2), ...rest.slice(0, 5 - Math.min(2, good.length)), ...good.slice(2, 3)].slice(0, 5));
+    if (toGoal[cur] === 1 && !shown.includes(b)) shown[0] = b;
+    const steps = path.length - 1;
+    $("#quiz-body").innerHTML = `
+      <div class="prompt short"><p class="prompt-label">Finde den Weg über verbundene Personen. Schritte: ${steps} · Ziel erreichbar in ${opt}</p></div>
+      <div class="route"><div class="route-goal"><span class="muted">Start</span><strong>${esc(A.name)}</strong></div><span class="arrow">→</span><div class="route-goal"><span class="muted">Ziel</span><strong>${esc(B.name)}</strong></div></div>
+      <div class="chain">${chain()}</div>
+      <p class="prompt-label hop">Mit wem ist <strong>${esc(PEOPLE[cur].name)}</strong> verbunden?</p>
+      <div class="answers" id="hop-opts">${shown.map((id) => `<button class="answer" data-id="${id}">${esc(PEOPLE[id].name)}<span class="hint">${esc(PEOPLE[id].role)}</span></button>`).join("")}</div>
+      ${FEEDBACK}`;
+    $("#hop-opts").addEventListener("click", (e) => {
+      const btn = e.target.closest(".answer");
+      if (!btn || btn.disabled) return;
+      step(btn.dataset.id, cur, btn);
+    });
+  };
+
+  const step = (id, cur, btn) => {
+    const before = toGoal[cur], after = toGoal[id];
+    $("#hop-opts").querySelectorAll(".answer").forEach((x) => { x.disabled = true; });
+    btn.classList.add(after < before ? "correct" : after > before ? "wrong" : "neutral");
+    path.push(id);
+    const mood = after < before ? "Näher dran" : after > before ? "Umweg" : "Gleich weit entfernt";
+    const why = esc(edgeWhy(cur, id));
+    const steps = path.length - 1;
+    if (id === b || steps >= limit) $("#hop-opts").hidden = true;
+    if (id === b) {
+      const pts = Math.max(1, 6 - 2 * (steps - opt));
+      record({ correct: steps <= opt + 1, pts, show: { icon: "🕸", title: `${A.name} → ${B.name}`, sub: `${steps} Schritte, kürzester Weg: ${opt}` } });
+      $("#feedback").innerHTML = `<div class="fb-text"><p><strong>Ziel erreicht in ${steps} ${steps === 1 ? "Schritt" : "Schritten"}</strong> (kürzester Weg: ${opt}) · ${pts} Punkte</p>${summary(path)}</div><button class="btn" id="next" type="button">Weiter</button>`;
+      $("#next").addEventListener("click", next);
+      return;
+    }
+    if (steps >= limit) {
+      const best = shortestPath(a, b);
+      record({ correct: false, pts: 0, show: { icon: "🕸", title: `${A.name} → ${B.name}`, sub: `zu viele Umwege, kürzester Weg: ${opt}` } });
+      $("#feedback").innerHTML = `<div class="fb-text"><p><strong>Zu viele Umwege.</strong> Ein kürzester Weg:</p>${summary(best)}</div><button class="btn" id="next" type="button">Weiter</button>`;
+      $("#next").addEventListener("click", next);
+      return;
+    }
+    $("#feedback").innerHTML = `<div class="fb-text"><p><strong>${mood}.</strong><br>${why}</p></div><button class="btn" id="step-on" type="button">Weiter</button>`;
+    $("#step-on").addEventListener("click", draw);
+  };
+  draw();
+}
+
 /* ---------- Profile und Atlas (Overlay) ---------- */
 const sheetStack = [];
 function openSheet(render) {
@@ -1095,7 +1294,7 @@ function profileView(id) {
   const p = PEOPLE[id];
   discover(id);
   $("#sheet-title").textContent = "Profil";
-  const rel = p.rel.map((r) => PEOPLE[r]).filter(Boolean);
+  const rel = (NEIGH[id] || []).map((n) => ({ p: PEOPLE[n.to], w: n.w })).filter((r) => r.p);
   const ph = PORTRAITS[id];
   $("#sheet-body").innerHTML = `
     <div class="profile">
@@ -1103,7 +1302,7 @@ function profileView(id) {
       ${steckbriefHTML(p)}
       ${ph ? `<p class="credit">Foto: ${esc(ph.artist)}, ${esc(ph.license)}, <a href="${esc(ph.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></p>` : ""}
       <h3>Weiter entdecken</h3>
-      <div class="rabbit">${rel.map((r) => `<button class="atlas-row" data-id="${r.id}">${avatar(r, "sm")}<span><strong>${esc(r.name)}</strong><span class="muted">${lifeSpan(r)}</span></span></button>`).join("")}</div>
+      <div class="rabbit">${rel.map((r) => `<button class="atlas-row" data-id="${r.p.id}">${avatar(r.p, "sm")}<span><strong>${esc(r.p.name)}</strong><span class="muted why">${esc(r.w)}</span></span></button>`).join("")}</div>
       <a class="btn ghost wide wiki" href="https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(p.name)}" target="_blank" rel="noopener">Bei Wikipedia lesen</a>
     </div>`;
   $("#sheet-body").querySelectorAll(".rabbit .atlas-row").forEach((b) => b.addEventListener("click", () => openProfile(b.dataset.id)));
@@ -1311,6 +1510,7 @@ async function init() {
     CONTENT = await get("content.json");
     CONTENT.people.forEach((p) => { PEOPLE[p.id] = p; });
     CONTENT.cards.forEach((c) => { CARD[c.id] = c; });
+    buildGraph();
   } catch { CONTENT = null; }
   try {
     PORTRAITS = (await get("portraits/portraits.json")).items || {};
