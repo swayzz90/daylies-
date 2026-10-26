@@ -573,7 +573,9 @@ function renderLearn() {
   }
 
   if (CHEM) {
-    know.insertAdjacentHTML("beforeend", `<h2 class="section-title chem-title">Chemie</h2>${GAMES.filter((g) => g.group === "chem").map(gameRow).join("")}`);
+    let cb = $("#chem-block");
+    if (!cb) { cb = document.createElement("div"); cb.id = "chem-block"; $("#atlas-row").insertAdjacentElement("afterend", cb); }
+    cb.innerHTML = `<h2 class="section-title chem-title">Chemie</h2><div class="modes">${GAMES.filter((g) => g.group === "chem").map(gameRow).join("")}</div>`;
   }
 
   // Welt-Quiz
