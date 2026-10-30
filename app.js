@@ -48,7 +48,7 @@ document.querySelectorAll(".tabbar button").forEach((b) =>
 /* =================================================================
    NACHRICHTEN und LESEN
    ================================================================= */
-const news = { items: [], updated: null, loadedAt: 0, paywall: 0 };
+const news = { items: [], groups: [], updated: null, loadedAt: 0, paywall: 0 };
 const readIds = new Set(store.get("read", []));
 
 const TOPICS = {
@@ -89,6 +89,7 @@ async function loadNews() {
     }));
     news.updated = data.updated;
     news.paywall = data.stats?.paywallRemoved || 0;
+    news.groups = data.groups || [];
   } catch {
     if (!news.items.length) $("#news-sub").textContent = "Offline. Keine gespeicherten Meldungen.";
   }
@@ -112,6 +113,96 @@ function dayLabel(iso) {
   if (dayKey(d) === today) return "Heute";
   if (dayKey(d) === dayKey(y)) return "Gestern";
   return d.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" });
+}
+
+/* ---------- Schlagzeilen (Gruppen aus news.json) ---------- */
+let hlBox = null;
+
+// Je Ansicht: die stärksten Gruppen zuerst. Bei „Alle“ 1 große + 3 kleine, höchstens 2 pro Thema.
+// Bei einem Thema 1 große + 2 kleine. Ab zwei passenden Gruppen gibt es einen Block.
+function pickHeadlines(ui) {
+  const pool = (news.groups || []).filter((g) =>
+    (langFilter === "alle" || g.lang === langFilter) &&
+    (ui.region === "alle" || g.regions.includes(ui.region) || g.regions.includes("beide")) &&
+    (ui.topic === "alle" || g.topics.includes(ui.topic)));
+  if (pool.length < 2) return [];
+  const all = ui.topic === "alle";
+  const want = all ? 4 : 3;
+  const perTopic = {};
+  const picked = [];
+  for (const g of pool) {                       // news.json ist bereits nach Punkten sortiert
+    if (picked.length === want) break;
+    if (all && (perTopic[g.topic] || 0) >= 2) continue;
+    perTopic[g.topic] = (perTopic[g.topic] || 0) + 1;
+    picked.push(g);
+  }
+  return picked;
+}
+
+function renderHeadlines(heads) {
+  if (!hlBox) {
+    hlBox = document.createElement("section");
+    hlBox.className = "headlines";
+    hlBox.addEventListener("click", (e) => {
+      const a = e.target.closest("a[data-id]");
+      if (!a) return;
+      saveScroll();
+      markRead(a.dataset.id);
+      a.classList.add("read");
+    });
+    $("#news-list").before(hlBox);
+  }
+  if (!heads.length) { hlBox.innerHTML = ""; return; }
+
+  const byId = new Map(news.items.map((it) => [it.id, it]));
+  const lead = (g) => byId.get(g.lead);
+  const badge = (g) => `<span class="hl-badge">Schlagzeile</span><span class="hl-count">Gemeldet von ${g.count} Quellen</span>`;
+  // Weitere Quellen der Gruppe: je Quelle eine Meldung, ohne die Führungsmeldung
+  const also = (g) => {
+    const seen = new Set([lead(g).source]);
+    return g.members.map((id) => byId.get(id)).filter((it) => {
+      if (!it || seen.has(it.source)) return false;
+      seen.add(it.source);
+      return true;
+    });
+  };
+  const alsoHtml = (g) => {
+    const list = also(g);
+    if (!list.length) return "";
+    const names = list.map((it) => it.source);
+    const label = names.length > 3 ? `${names.slice(0, 3).join(", ")} und ${names.length - 3} weitere` : names.join(", ");
+    return `<details class="hl-also"><summary>Auch bei: ${esc(label)}</summary>
+      <div class="hl-also-list">${list.map((it) => `<a href="${esc(it.link)}" target="_blank" rel="noopener" data-id="${esc(it.id)}" class="${readIds.has(it.id) ? "read" : ""}">${esc(it.source)}: ${esc(it.title)}</a>`).join("")}</div>
+    </details>`;
+  };
+  const bigHtml = (g) => {
+    const it = lead(g);
+    return `
+    <article class="hl-big">
+      <a class="hl-link${readIds.has(it.id) ? " read" : ""}" href="${esc(it.link)}" target="_blank" rel="noopener" data-id="${esc(it.id)}">
+        ${it.image ? `<img class="hl-img" src="${esc(it.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
+        <div class="hl-tags">${badge(g)}</div>
+        <h3 class="hl-title">${esc(it.title)}</h3>
+        ${it.summary ? `<p class="hl-summary">${esc(it.summary)}</p>` : ""}
+        <div class="news-meta"><span class="src">${esc(it.source)}</span><span>${esc(relTime(it.date))}</span></div>
+      </a>
+      ${alsoHtml(g)}
+    </article>`;
+  };
+  const rowHtml = (g) => {
+    const it = lead(g);
+    const topic = TOPICS[g.topic] ? `<span class="cat">${esc(TOPICS[g.topic])}</span>` : "";
+    return `
+    <article class="hl-row">
+      <a class="hl-row-link${readIds.has(it.id) ? " read" : ""}" href="${esc(it.link)}" target="_blank" rel="noopener" data-id="${esc(it.id)}">
+        <div class="hl-tags">${badge(g)}${topic}</div>
+        <h3 class="hl-row-title">${esc(it.title)}</h3>
+      </a>
+      ${alsoHtml(g)}
+    </article>`;
+  };
+  const [big, ...small] = heads;
+  hlBox.innerHTML = `<h2 class="section-title hl-head">Schlagzeilen</h2>${bigHtml(big)}${small.map(rowHtml).join("")}`;
 }
 
 function renderFeed(section) {
@@ -149,12 +240,18 @@ function renderFeed(section) {
   box.scrollLeft = keep;
 
   const q = ui.query.trim().toLowerCase();
-  const items = inRegion.filter((it) =>
+  const matches = inRegion.filter((it) =>
     (ui.topic === "alle" || it.topic === ui.topic) &&
     (!q || (it.title + " " + it.summary + " " + it.source).toLowerCase().includes(q))
   );
 
-  if (!items.length) {
+  // Schlagzeilen oben (nur Nachrichten, nur ohne Suchbegriff). Ihre Meldungen fehlen dann in der Zeitliste.
+  const heads = section === "news" && !q ? pickHeadlines(ui) : [];
+  if (section === "news") renderHeadlines(heads);
+  const shown = new Set(heads.flatMap((g) => g.members));
+  const items = matches.filter((it) => !shown.has(it.id));
+
+  if (!matches.length && !heads.length) {
     list.innerHTML = `<div class="empty"><strong>Keine Treffer</strong>
       ${q ? `Für „${esc(ui.query)}“ gibt es gerade nichts.` : "In dieser Auswahl gibt es gerade nichts."} Versuch einen anderen Begriff, ein anderes Thema oder die Sprache „Alle“.</div>`;
     return;
