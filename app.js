@@ -498,6 +498,15 @@ const GAMES = [
     avail: () => !!CHEM, pool: () => CHEM.titr, pick: () => pickFrom("c-titr", CHEM.titr) },
   { id: "c-analytik", kind: "chem", group: "chem", title: "Analytik-Detektiv", sub: "Methode wählen, IR und NMR deuten", icon: "IR", iconText: true, sr: true, short: "Analytik",
     avail: () => !!CHEM, pool: () => CHEM.analytik, pick: () => pickFrom("c-analytik", CHEM.analytik) },
+  { id: "cw", kind: "cross", group: "cross", pmode: "cross", title: "Kreuzwort Mix", sub: "Personen und Länder, aus deinem Lernkasten", icon: "ABC", iconText: true, sr: true, scored: true, short: "Kreuzwort",
+    avail: () => !!CONTENT, pool: () => cwPool("mix"), pick: () => cwMake("mix", false) },
+  { id: "cw-p", kind: "cross", group: "cross", pmode: "cross", title: "Kreuzwort Personen", sub: "Nachnamen erraten, Hinweise wie in der Akte", icon: "👤", sr: true, scored: true, short: "Kreuz Personen",
+    avail: () => !!CONTENT, pool: () => cwPool("p"), pick: () => cwMake("p", false) },
+  { id: "cw-l", kind: "cross", group: "cross", pmode: "cross", title: "Kreuzwort Länder", sub: "Hauptstädte und Länder", icon: "🌍", sr: true, scored: true, short: "Kreuz Länder",
+    avail: () => countries.length > 0, pool: () => cwPool("l"), pick: () => cwMake("l", false) },
+  { id: "cw-d", kind: "cross", group: "cross", pmode: "cross", title: "Tagesrätsel", sub: "Jeden Tag ein neues Rätsel", icon: "📅", scored: true, noAgain: true,
+    noAgainMsg: "Das Tagesrätsel ist gelöst. Morgen wartet ein neues.", short: "Tagesrätsel",
+    avail: () => !!CONTENT, pool: () => cwPool("mix"), pick: () => cwMake("mix", true) },
 ];
 const DECK = { id: "cards", kind: "deck", title: "Tagesstapel", sr: true, noAgain: true, short: "Tagesstapel" };
 const gameById = (id) => GAMES.find((g) => g.id === id);
@@ -610,8 +619,9 @@ function gameStats(g) {
   else if (g.id === "quote") list = CONTENT?.quotes;
   else if (g.pool) list = g.pool();
   if (list) {
-    const mastered = list.filter((x) => (rec(g.id, x.id)?.box ?? 0) >= MASTERED).length;
-    const due = list.filter((x) => { const r = rec(g.id, x.id); return r && r.box < 5 && r.due <= now; }).length;
+    const pm = g.pmode || g.id;
+    const mastered = list.filter((x) => (rec(pm, x.id)?.box ?? 0) >= MASTERED).length;
+    const due = list.filter((x) => { const r = rec(pm, x.id); return r && r.box < 5 && r.due <= now; }).length;
     return { sub: `${mastered} von ${list.length} sicher${due ? `, ${due} zum Wiederholen` : ""}`, pct: list.length ? Math.round((mastered / list.length) * 100) : 0 };
   }
   const best = store.get("best", {})[g.id];
@@ -673,6 +683,11 @@ function renderLearn() {
     let cb = $("#chem-block");
     if (!cb) { cb = document.createElement("div"); cb.id = "chem-block"; $("#atlas-row").insertAdjacentElement("afterend", cb); }
     cb.innerHTML = `<h2 class="section-title chem-title">Chemie</h2><div class="modes">${GAMES.filter((g) => g.group === "chem").map(gameRow).join("")}</div>`;
+  }
+  if (CONTENT) {
+    let xb = $("#cross-block");
+    if (!xb) { xb = document.createElement("div"); xb.id = "cross-block"; ($("#chem-block") || $("#atlas-row")).insertAdjacentElement("afterend", xb); }
+    xb.innerHTML = `<h2 class="section-title chem-title">Kreuzworträtsel</h2><div class="modes">${GAMES.filter((g) => g.group === "cross" && (!g.avail || g.avail())).map(gameRow).join("")}</div>`;
   }
 
   // Welt-Quiz
@@ -763,7 +778,7 @@ function renderDots() {
 
 const RENDER = {
   country: (t) => renderCountry(t), map: (t) => renderMap(t), tf: (t) => renderTF(t), before: (t) => renderBefore(t),
-  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), deck: (t) => renderDeck(t), face: (t) => renderFace(t), duel: (t) => renderDuel(t), quote: (t) => renderQuote(t), links: (t) => renderLinks(t), chem: (t) => renderChem(t),
+  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), deck: (t) => renderDeck(t), face: (t) => renderFace(t), duel: (t) => renderDuel(t), quote: (t) => renderQuote(t), links: (t) => renderLinks(t), chem: (t) => renderChem(t), cross: (t) => renderCross(t),
   who: (t) => (t.mode === "learn" ? renderLearnCard(t) : renderAkte(t)),
 };
 function renderQuestion() {
@@ -1532,7 +1547,7 @@ function renderResult() {
   }
 
   const msg =
-    mode.noAgain ? "Für heute reicht es. Morgen warten 10 neue Karten, falsche Antworten kommen dazwischen wieder." :
+    mode.noAgain ? (mode.noAgainMsg || "Für heute reicht es. Morgen warten 10 neue Karten, falsche Antworten kommen dazwischen wieder.") :
     mode.sr
       ? (score === total ? "Fehlerfrei. Die Fragen kommen erst in ein paar Tagen wieder."
         : score >= total * 0.7 ? "Gute Runde. Die Fehler kommen in der nächsten Runde wieder dran."
@@ -1808,6 +1823,328 @@ function renderChem(item) {
       feedback: `<div class="fb-text"><p><strong>${esc(q.o[0])}</strong><br><span class="muted">${esc(q.e || "")}</span></p></div>`,
     });
   }, { once: true }));
+}
+
+/* =================================================================
+   KREUZWORT: Wörter aus Personen und Ländern, das Gitter baut die App selbst
+   Antworten: Großbuchstaben A bis Z, Ä = AE, Ö = OE, Ü = UE, ß = SS, 4 bis 12 Buchstaben.
+   ================================================================= */
+/*CROSS-PURE-START*/
+const cwFlat = (s) => String(s).replace(/[ÄÖÜäöüß]/g, "a").normalize("NFD").replace(/\p{M}+/gu, "");
+const cwWordOK = (raw) => /^[A-Za-z]+$/.test(cwFlat(raw));
+function cwNorm(s) {
+  return String(s).toUpperCase().replace(/Ä/g, "AE").replace(/Ö/g, "OE").replace(/Ü/g, "UE")
+    .normalize("NFD").replace(/\p{M}+/gu, "").replace(/[^A-Z]/g, "");
+}
+
+// Aus dem vollen Namen ein Rätselwort machen: Nachname, bei Beinamen („der Große“) der Vorname
+const CW_NAME_OVERRIDE = { "Leonardo da Vinci": "Leonardo" };
+function cwPersonAnswer(name) {
+  if (CW_NAME_OVERRIDE[name]) return CW_NAME_OVERRIDE[name];
+  const t = name.split(/\s+/).filter((w) => !/^(?:[IVX]+\.|Jr\.?)$/.test(w));
+  const i = t.findIndex((w) => /^(?:der|die|das)$/i.test(w));
+  const raw = i > 0 ? t[i - 1] : t[t.length - 1];
+  return raw.split(/[’']/).pop();
+}
+
+function buildCwWords(people, countryList) {
+  const out = [];
+  const add = (w) => {
+    w.len = w.answer.length;
+    if (w.len < 4 || w.len > 12) return;
+    if (w.clues.some((c) => cwNorm(c).includes(w.answer))) return; // Antwort steht schon in der Frage
+    out.push(w);
+  };
+  for (const p of people) {
+    const raw = cwPersonAnswer(p.name);
+    if (!cwWordOK(raw) || !p.hints?.length) continue;
+    add({ id: `p:${p.id}`, src: "p", answer: cwNorm(raw), label: p.name, clues: p.hints.slice() });
+  }
+  for (const c of countryList) {
+    if (c.capital && cwWordOK(c.capital)) {
+      add({ id: `cap:${c.id}`, src: "l", answer: cwNorm(c.capital), label: c.capital, clues: [`Hauptstadt von ${c.name}`, `Region: ${c.region}`] });
+    }
+    if (c.name && c.capital && cwWordOK(c.name)) {
+      add({ id: `land:${c.id}`, src: "l", answer: cwNorm(c.name), label: c.name, clues: [`Land mit der Hauptstadt ${c.capital}`, `Flagge: ${c.flag}`, `Region: ${c.region}`] });
+    }
+  }
+  return out;
+}
+
+const cwHash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+function cwMulberry(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function cwShuffle(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+// Gitter bauen: Wörter werden an gemeinsamen Buchstaben angelegt, viele Versuche, das beste Ergebnis gewinnt
+function buildCrossword(words, rng = Math.random, { tries = 120, maxWords = 10, maxDim = 12, minWords = 5 } = {}) {
+  const seen = new Set(), pool = [];
+  for (const w of words) if (!seen.has(w.answer)) { seen.add(w.answer); pool.push(w); }
+  if (pool.length < minWords) return null;
+  const key = (x, y) => `${x},${y}`;
+  const longest = pool.slice().sort((a, b) => b.answer.length - a.answer.length).slice(0, 3);
+
+  // Prüft eine Lage. Ergebnis: Zahl der Kreuzungen oder -1, wenn die Lage verboten ist.
+  const check = (cells, ans, x, y, dir) => {
+    const dx = dir === "a" ? 1 : 0, dy = dir === "d" ? 1 : 0, n = ans.length;
+    if (cells.has(key(x - dx, y - dy)) || cells.has(key(x + dx * n, y + dy * n))) return -1;
+    let cross = 0;
+    for (let i = 0; i < n; i++) {
+      const cx = x + dx * i, cy = y + dy * i, c = cells.get(key(cx, cy));
+      if (c) {
+        if (c.ch !== ans[i] || c[dir] != null) return -1;
+        cross++;
+      } else if (cells.has(key(cx + dy, cy + dx)) || cells.has(key(cx - dy, cy - dx))) return -1; // würde neben einem Wort kleben
+    }
+    return cross;
+  };
+
+  let best = null;
+  for (let t = 0; t < tries; t++) {
+    const first = longest[Math.floor(rng() * longest.length)];
+    const rest = cwShuffle(pool.filter((w) => w !== first), rng);
+    const cells = new Map(), placed = [];
+    let b = { x0: 0, y0: 0, x1: 0, y1: 0 }, crossings = 0;
+    const put = (w, x, y, dir) => {
+      const dx = dir === "a" ? 1 : 0, dy = dir === "d" ? 1 : 0;
+      const idx = placed.length;
+      placed.push({ w, x, y, dir });
+      for (let i = 0; i < w.answer.length; i++) {
+        const k = key(x + dx * i, y + dy * i), c = cells.get(k) || { ch: w.answer[i] };
+        c[dir] = idx;
+        cells.set(k, c);
+      }
+      const x1 = x + dx * (w.answer.length - 1), y1 = y + dy * (w.answer.length - 1);
+      b = { x0: Math.min(b.x0, x), y0: Math.min(b.y0, y), x1: Math.max(b.x1, x1), y1: Math.max(b.y1, y1) };
+    };
+    put(first, 0, 0, "a");
+    for (const w of rest) {
+      if (placed.length >= maxWords) break;
+      let pick = null, pickScore = -Infinity;
+      const tried = new Set();
+      for (let i = 0; i < w.answer.length; i++) {
+        for (const [k, c] of cells) {
+          if (c.ch !== w.answer[i] || (c.a != null) === (c.d != null)) continue; // nur Zellen mit genau einem Wort
+          const [cx, cy] = k.split(",").map(Number);
+          const dir = c.a != null ? "d" : "a";
+          const x = cx - (dir === "a" ? i : 0), y = cy - (dir === "d" ? i : 0);
+          const tk = `${x},${y},${dir}`;
+          if (tried.has(tk)) continue;
+          tried.add(tk);
+          const cr = check(cells, w.answer, x, y, dir);
+          if (cr < 1) continue;
+          const x1 = x + (dir === "a" ? w.answer.length - 1 : 0), y1 = y + (dir === "d" ? w.answer.length - 1 : 0);
+          const nw = Math.max(b.x1, x1) - Math.min(b.x0, x) + 1, nh = Math.max(b.y1, y1) - Math.min(b.y0, y) + 1;
+          if (nw > maxDim || nh > maxDim) continue;
+          const sc = cr * 10 - nw * nh * 0.15 - Math.abs(nw - nh) * 0.5 + rng() * 2;
+          if (sc > pickScore) { pickScore = sc; pick = { x, y, dir, cr }; }
+        }
+      }
+      if (pick) { put(w, pick.x, pick.y, pick.dir); crossings += pick.cr; }
+    }
+    const area = (b.x1 - b.x0 + 1) * (b.y1 - b.y0 + 1);
+    const score = placed.length * 1000 + crossings * 20 - area;
+    if (!best || score > best.score) best = { score, placed, cells, b };
+  }
+  if (!best || best.placed.length < minWords) return null;
+
+  // Koordinaten auf 0 schieben, Nummern vergeben (von links oben nach rechts unten)
+  const { x0, y0, x1, y1 } = best.b;
+  const entries = best.placed.map((p) => {
+    const x = p.x - x0, y = p.y - y0, dx = p.dir === "a" ? 1 : 0, dy = p.dir === "d" ? 1 : 0;
+    return { w: p.w, x, y, dir: p.dir, cells: p.w.answer.split("").map((_, i) => key(x + dx * i, y + dy * i)) };
+  });
+  const starts = [...new Set(entries.map((e) => `${e.y},${e.x}`))]
+    .map((s) => s.split(",").map(Number)).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const num = new Map(starts.map(([y, x], i) => [key(x, y), i + 1]));
+  entries.forEach((e) => { e.num = num.get(key(e.x, e.y)); });
+  entries.sort((a, b) => a.num - b.num || (a.dir === "a" ? -1 : 1));
+  const sol = {};
+  for (const e of entries) e.cells.forEach((k, i) => { sol[k] = e.w.answer[i]; });
+  return { w: x1 - x0 + 1, h: y1 - y0 + 1, entries, sol, nums: Object.fromEntries(num) };
+}
+/*CROSS-PURE-END*/
+
+let CW = null;
+function cwPool(src) {
+  CW ??= buildCwWords(CONTENT?.people || [], countries || []);
+  return src === "mix" ? CW : CW.filter((w) => w.src === src);
+}
+function cwMake(src, daily) {
+  const pool = cwPool(src);
+  let cand, rng;
+  if (daily) {
+    const day = dayKey();
+    rng = cwMulberry(cwHash("cw-bau-" + day));
+    cand = cwShuffle(pool, cwMulberry(cwHash("cw-wahl-" + day))).slice(0, 18);
+  } else {
+    rng = Math.random;
+    cand = pickFrom("cross", pool, 18);
+  }
+  const pz = buildCrossword(cand, rng);
+  return pz ? [pz] : [];
+}
+
+function renderCross(pz) {
+  const E = pz.entries, N = E.length;
+  quiz.questions = E; quiz.results = []; quiz.i = 0; quiz.points = 0;
+
+  const at = {}; // Zelle -> { a: Wort-Nr., d: Wort-Nr. }
+  E.forEach((e, i) => e.cells.forEach((k) => { (at[k] ??= {})[e.dir] = i; }));
+  const st = { vals: {}, locked: new Set(), wrong: new Set(), help: E.map(() => 0), hints: E.map(() => 0), done: new Set(), sel: E[0].cells[0], dir: E[0].dir, finished: false };
+
+  let grid = "";
+  for (let y = 0; y < pz.h; y++) for (let x = 0; x < pz.w; x++) {
+    const k = `${x},${y}`;
+    grid += pz.sol[k]
+      ? `<button type="button" class="cw-cell" data-k="${k}">${pz.nums[k] ? `<i class="cw-n">${pz.nums[k]}</i>` : ""}<b class="cw-l"></b></button>`
+      : `<span class="cw-blank"></span>`;
+  }
+  const keys = (row) => row.split("").map((c) => `<button type="button" class="cw-key" data-ch="${c}">${c}</button>`).join("");
+  $("#quiz-body").innerHTML = `
+    <div class="cw-top">
+      <p class="prompt-label" id="cw-label"></p>
+      <p class="cw-clue" id="cw-clue"></p>
+      <ul class="cw-extra" id="cw-extra"></ul>
+    </div>
+    <div class="cw-gridwrap"><div class="cw-grid" id="cw-grid" style="--cols:${pz.w}">${grid}</div></div>
+    <p class="cw-note">Umlaute als AE, OE, UE, ß als SS. Antippen wählt ein Wort, nochmal Antippen wechselt die Richtung.</p>
+    <details class="cw-list"><summary>Alle Fragen</summary><div id="cw-all"></div></details>
+    <div class="feedback" id="feedback"></div>
+    <div class="cw-kb">
+      <div class="cw-tools">
+        <button type="button" class="cw-tool" id="cw-hint"></button>
+        <button type="button" class="cw-tool" id="cw-reveal">Buchstabe</button>
+        <button type="button" class="cw-tool" id="cw-check">Prüfen</button>
+      </div>
+      <div class="cw-row">${keys("QWERTZUIOP")}</div>
+      <div class="cw-row">${keys("ASDFGHJKL")}</div>
+      <div class="cw-row">${keys("YXCVBNM")}<button type="button" class="cw-key wide" id="cw-back" aria-label="Löschen">⌫</button></div>
+    </div>`;
+
+  const cellEls = [...$("#cw-grid").querySelectorAll(".cw-cell")];
+  const dirName = (d) => (d === "a" ? "waagerecht" : "senkrecht");
+  const activeIdx = () => {
+    const c = at[st.sel];
+    if (c[st.dir] != null) return c[st.dir];
+    st.dir = st.dir === "a" ? "d" : "a";
+    return c[st.dir];
+  };
+
+  function paint() {
+    const act = activeIdx(), e = E[act];
+    const inWord = new Set(e.cells);
+    cellEls.forEach((el) => {
+      const k = el.dataset.k;
+      el.querySelector(".cw-l").textContent = st.vals[k] || "";
+      el.className = "cw-cell" + (inWord.has(k) ? " in" : "") + (k === st.sel ? " sel" : "") + (st.locked.has(k) ? " ok" : "") + (st.wrong.has(k) ? " bad" : "");
+    });
+    $("#cw-label").textContent = `${e.num} ${dirName(e.dir)} · ${e.w.answer.length} Buchstaben${st.done.has(act) ? " · gelöst" : ""}`;
+    $("#cw-clue").textContent = e.w.clues[0];
+    $("#cw-extra").innerHTML = e.w.clues.slice(1, 1 + st.hints[act]).map((c) => `<li>${esc(c)}</li>`).join("");
+    const left = e.w.clues.length - 1 - st.hints[act];
+    const hb = $("#cw-hint");
+    hb.textContent = left > 0 ? "Hinweis" : "Kein Hinweis mehr";
+    hb.disabled = left <= 0 || st.done.has(act) || st.finished;
+    $("#cw-all").innerHTML = E.map((x, i) =>
+      `<button type="button" class="cw-li${st.done.has(i) ? " done" : ""}${i === act ? " now" : ""}" data-e="${i}"><b>${x.num}${x.dir === "a" ? "→" : "↓"}</b> ${esc(x.w.clues[0])}</button>`).join("");
+    quiz.i = act;
+    renderDots();
+    $("#quiz-count").textContent = `${st.done.size}/${N}`;
+  }
+
+  function finishWord(i) {
+    const w = E[i].w, helped = st.help[i];
+    st.done.add(i);
+    E[i].cells.forEach((k) => st.locked.add(k));
+    const pts = Math.max(0, 3 - helped);
+    quiz.results[i] = { correct: helped === 0, pts, show: { icon: "✏️", title: w.label, sub: w.clues[0] } };
+    quiz.points += pts;
+    saveRec("cross", w.id, helped === 0);
+  }
+  function checkDone(k) {
+    for (const d of ["a", "d"]) {
+      const i = at[k]?.[d];
+      if (i != null && !st.done.has(i) && E[i].cells.every((c) => st.vals[c] === pz.sol[c])) finishWord(i);
+    }
+    if (st.done.size === N && !st.finished) {
+      st.finished = true;
+      $("#feedback").innerHTML = `<button class="btn wide" id="cw-end">Ergebnis ansehen</button>`;
+      $("#cw-end").addEventListener("click", renderResult);
+    }
+  }
+  function gotoUnsolved(from) {
+    for (let s = 1; s <= N; s++) {
+      const j = (from + s) % N;
+      if (st.done.has(j)) continue;
+      st.dir = E[j].dir;
+      st.sel = E[j].cells.find((c) => !st.locked.has(c) && !st.vals[c]) || E[j].cells.find((c) => !st.locked.has(c)) || E[j].cells[0];
+      return;
+    }
+  }
+  function advance(act) {
+    if (st.done.has(act)) { gotoUnsolved(act); return; }
+    const cs = E[act].cells;
+    for (let i = cs.indexOf(st.sel) + 1; i < cs.length; i++) if (!st.locked.has(cs[i])) { st.sel = cs[i]; return; }
+  }
+
+  $("#cw-grid").addEventListener("click", (ev) => {
+    const el = ev.target.closest(".cw-cell");
+    if (!el || st.finished) return;
+    const k = el.dataset.k, c = at[k];
+    if (k === st.sel && c.a != null && c.d != null) st.dir = st.dir === "a" ? "d" : "a";
+    else { st.sel = k; if (c[st.dir] == null) st.dir = st.dir === "a" ? "d" : "a"; }
+    paint();
+  });
+  $("#cw-all").addEventListener("click", (ev) => {
+    const b = ev.target.closest(".cw-li");
+    if (!b || st.finished) return;
+    const e = E[Number(b.dataset.e)];
+    st.dir = e.dir;
+    st.sel = e.cells.find((c) => !st.locked.has(c)) || e.cells[0];
+    paint();
+  });
+  $(".cw-kb").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button");
+    if (!b || st.finished) return;
+    const act = activeIdx();
+    if (b.dataset.ch) {
+      if (!st.locked.has(st.sel)) { st.vals[st.sel] = b.dataset.ch; st.wrong.delete(st.sel); checkDone(st.sel); }
+      advance(act);
+    } else if (b.id === "cw-back") {
+      const cs = E[act].cells;
+      if (!st.locked.has(st.sel) && st.vals[st.sel]) { delete st.vals[st.sel]; st.wrong.delete(st.sel); }
+      else {
+        let i = cs.indexOf(st.sel) - 1;
+        while (i >= 0 && st.locked.has(cs[i])) i--;
+        if (i >= 0) { st.sel = cs[i]; delete st.vals[cs[i]]; st.wrong.delete(cs[i]); }
+      }
+    } else if (b.id === "cw-hint") {
+      if (st.hints[act] < E[act].w.clues.length - 1 && !st.done.has(act)) { st.hints[act]++; st.help[act]++; }
+    } else if (b.id === "cw-reveal") {
+      const k = st.sel;
+      if (!st.locked.has(k) && st.vals[k] !== pz.sol[k]) {
+        st.vals[k] = pz.sol[k]; st.wrong.delete(k);
+        for (const d of ["a", "d"]) { const i = at[k][d]; if (i != null && !st.done.has(i)) st.help[i]++; }
+        checkDone(k);
+        advance(act);
+      }
+    } else if (b.id === "cw-check") {
+      for (const [k, v] of Object.entries(st.vals)) if (!st.locked.has(k) && v !== pz.sol[k]) st.wrong.add(k);
+    }
+    paint();
+  });
+  paint();
 }
 
 /* ---------- Zurück wischen: vom linken Rand nach rechts ---------- */
