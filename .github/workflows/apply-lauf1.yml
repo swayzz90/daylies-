@@ -1,0 +1,48 @@
+# Einmaliger Lauf auf gpt-update. Die Produktions-Website (main) bleibt unberührt.
+name: Daylies – Lauf 1 in gpt-update übernehmen
+
+on:
+  push:
+    branches:
+      - gpt-update
+    paths:
+      - '.github/workflows/apply-lauf1.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  lauf1:
+    if: github.repository == 'swayzz90/daylies-'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Entwicklungsbranch auschecken
+        uses: actions/checkout@v4
+        with:
+          ref: gpt-update
+          persist-credentials: true
+
+      - name: JavaScript-Prüfung vorbereiten
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verbesserungen sicher anwenden
+        run: python3 apply_lauf1.py
+
+      - name: Änderungen prüfen
+        run: |
+          node --check app.js
+          git diff --check
+
+      - name: Verbesserungen in gpt-update speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js style.css index.html manifest.webmanifest sw.js
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen vorhanden."
+          else
+            git commit -m "Lauf 1: OLED-Schwarz, Feed-Performance, Offline- und Quizverbesserungen"
+            git push origin HEAD:gpt-update
+          fi
