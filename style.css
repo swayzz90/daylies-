@@ -4,13 +4,13 @@
 
 :root {
   color-scheme: dark;
-  --bg: #151A23;
-  --surface: #1D2430;
-  --ink: #E7ECF3;
-  --muted: #93A0B3;
-  --line: #2A3342;
+  --bg: #000000;
+  --surface: #080808;
+  --ink: #F5F7FA;
+  --muted: #A3ADBB;
+  --line: #252525;
   --accent: #93BCE0;
-  --accent-soft: #223347;
+  --accent-soft: #102235;
   --on-accent: #0F1722;
   --good: #78C49A;
   --good-soft: #1B3328;
@@ -593,3 +593,13 @@ a.btn { text-decoration: none; display: inline-block; text-align: center; }
 }
 .cw-key.wide { max-width: 56px; flex: 1.4; }
 .cw-key:active { background: var(--accent-soft); }
+
+
+/* Lauf 1: Listen schrittweise laden, tastaturfreundlich und OLED-schwarz. */
+.feed-more {
+  width: 100%; margin: 16px 0 6px; padding: 13px 16px;
+  border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--accent); font-weight: 700;
+}
+.feed-more:active { background: var(--accent-soft); }
+.cw-cell:focus-visible, .cw-key:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -62,8 +62,8 @@ const LANG_LABEL = { alle: "Alle", de: "DE", en: "EN" };
 const savedFilters = store.get("filters", {});
 let langFilter = LANGS.includes(savedFilters.lang) ? savedFilters.lang : "alle";
 const feedUI = {
-  news: { list: "#news-list", topics: "#news-topics", region: savedFilters.region || "alle", topic: savedFilters.newsTopic || "alle", query: "" },
-  lesen: { list: "#lesen-list", topics: "#lesen-topics", topic: savedFilters.lesenTopic || "alle", query: "" },
+  news: { list: "#news-list", topics: "#news-topics", region: savedFilters.region || "alle", topic: savedFilters.newsTopic || "alle", query: "", limit: 60 },
+  lesen: { list: "#lesen-list", topics: "#lesen-topics", topic: savedFilters.lesenTopic || "alle", query: "", limit: 60 },
 };
 const saveFilters = () => store.set("filters", { region: feedUI.news.region, newsTopic: feedUI.news.topic, lesenTopic: feedUI.lesen.topic, lang: langFilter });
 
@@ -120,8 +120,9 @@ let hlBox = null;
 
 // Je Ansicht: die stärksten Gruppen zuerst. Bei „Alle“ 1 große + 3 kleine, höchstens 2 pro Thema.
 // Bei einem Thema 1 große + 2 kleine. Ab zwei passenden Gruppen gibt es einen Block.
-function pickHeadlines(ui) {
+function pickHeadlines(ui, visibleIds) {
   const pool = (news.groups || []).filter((g) =>
+    visibleIds.has(g.lead) &&
     (langFilter === "alle" || g.lang === langFilter) &&
     (ui.region === "alle" || g.regions.includes(ui.region) || g.regions.includes("beide")) &&
     (ui.topic === "alle" || g.topics.includes(ui.topic)));
@@ -139,7 +140,7 @@ function pickHeadlines(ui) {
   return picked;
 }
 
-function renderHeadlines(heads) {
+function renderHeadlines(heads, visibleIds) {
   if (!hlBox) {
     hlBox = document.createElement("section");
     hlBox.className = "headlines";
@@ -161,7 +162,7 @@ function renderHeadlines(heads) {
   const also = (g) => {
     const seen = new Set([lead(g).source]);
     return g.members.map((id) => byId.get(id)).filter((it) => {
-      if (!it || seen.has(it.source)) return false;
+      if (!it || !visibleIds.has(it.id) || seen.has(it.source)) return false;
       seen.add(it.source);
       return true;
     });
@@ -246,9 +247,10 @@ function renderFeed(section) {
   );
 
   // Schlagzeilen oben (nur Nachrichten, nur ohne Suchbegriff). Ihre Meldungen fehlen dann in der Zeitliste.
-  const heads = section === "news" && !q ? pickHeadlines(ui) : [];
-  if (section === "news") renderHeadlines(heads);
-  const shown = new Set(heads.flatMap((g) => g.members));
+  const visibleIds = new Set(matches.map((it) => it.id));
+  const heads = section === "news" && !q ? pickHeadlines(ui, visibleIds) : [];
+  if (section === "news") renderHeadlines(heads, visibleIds);
+  const shown = new Set(heads.flatMap((g) => g.members.filter((id) => visibleIds.has(id))));
   const items = matches.filter((it) => !shown.has(it.id));
 
   if (!matches.length && !heads.length) {
@@ -259,7 +261,7 @@ function renderFeed(section) {
 
   let html = "";
   let lastDay = "";
-  for (const it of items) {
+  for (const it of items.slice(0, ui.limit)) {
     const label = dayLabel(it.date);
     if (label !== lastDay) { html += `<h2 class="day-label">${esc(label)}</h2>`; lastDay = label; }
     const chip = ui.topic === "alle" && TOPICS[it.topic] ? `<span class="cat">${TOPICS[it.topic]}</span>` : "";
@@ -275,6 +277,8 @@ function renderFeed(section) {
         ${it.image ? `<img class="news-thumb" src="${esc(it.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
       </a>`;
   }
+  const remaining = items.length - ui.limit;
+  if (remaining > 0) html += `<button type="button" class="feed-more" aria-label="${remaining} weitere Beiträge laden">Weitere Beiträge anzeigen (${remaining} übrig)</button>`;
   list.innerHTML = html;
   if (pendingScroll && pendingScroll.tab === section && currentTab === section) {
     const y = pendingScroll.y; pendingScroll = null;
@@ -298,6 +302,14 @@ window.addEventListener("pagehide", saveScroll);
 
 document.querySelectorAll(".feed-list").forEach((list) =>
   list.addEventListener("click", (e) => {
+    if (e.target.closest(".feed-more")) {
+      const section = list.id === "news-list" ? "news" : "lesen";
+      const y = scroller.scrollTop;
+      feedUI[section].limit += 60;
+      renderFeed(section);
+      requestAnimationFrame(() => scroller.scrollTo(0, y));
+      return;
+    }
     const a = e.target.closest(".news-item");
     if (!a) return;
     saveScroll();
@@ -312,6 +324,7 @@ document.querySelectorAll(".topics").forEach((box) =>
     const b = e.target.closest("button");
     if (!b) return;
     feedUI[box.dataset.section].topic = b.dataset.topic;
+    feedUI[box.dataset.section].limit = 60;
     saveFilters();
     renderFeed(box.dataset.section);
   })
@@ -324,6 +337,7 @@ markRegion();
 document.querySelectorAll(".segmented button").forEach((b) =>
   b.addEventListener("click", () => {
     feedUI.news.region = b.dataset.cat;
+    feedUI.news.limit = 60;
     saveFilters();
     markRegion();
     renderFeed("news");
@@ -340,6 +354,7 @@ markLang();
 document.querySelectorAll(".lang-btn").forEach((b) =>
   b.addEventListener("click", () => {
     langFilter = LANGS[(LANGS.indexOf(langFilter) + 1) % LANGS.length];
+    feedUI.news.limit = feedUI.lesen.limit = 60;
     saveFilters();
     markLang();
     renderFeed("news");
@@ -351,7 +366,7 @@ let searchTimer;
 [["news", "#news-search"], ["lesen", "#lesen-search"]].forEach(([section, sel]) =>
   $(sel).addEventListener("input", (e) => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { feedUI[section].query = e.target.value; renderFeed(section); }, 120);
+    searchTimer = setTimeout(() => { feedUI[section].query = e.target.value; feedUI[section].limit = 60; renderFeed(section); }, 120);
   })
 );
 
@@ -725,17 +740,27 @@ $("#view-learn").addEventListener("click", (e) => {
 /* ---------- Quiz-Rahmen ---------- */
 let quiz = null;
 let nextTimer;
+let quizReturnFocus = null;
+let cwKeyHandler = null;
 
+function removeCrossKeyboard() {
+  if (cwKeyHandler) document.removeEventListener("keydown", cwKeyHandler);
+  cwKeyHandler = null;
+}
 function showQuiz() {
+  if ($("#quiz").hidden) quizReturnFocus = document.activeElement;
   $("#quiz").hidden = false;
   document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => $("#quiz-close").focus({ preventScroll: true }));
 }
 
 function startQuiz(game) {
   clearTimeout(nextTimer);
-  const questions = game.pick();
+  removeCrossKeyboard();
+  const saved = game.kind === "cross" ? loadCrossSession(game) : null;
+  const questions = saved ? [saved.puzzle] : game.pick();
   if (!questions.length) return;
-  quiz = { mode: game, questions, i: 0, results: [], points: 0 };
+  quiz = { mode: game, questions, i: 0, results: [], points: 0, crossSaved: saved?.state || null };
   if (game.kind === "who") preloadPhotos(questions.map((q) => q.p));
   else if (game.kind === "face") preloadPhotos(questions);
   else if (game.kind === "duel") preloadPhotos(questions.flatMap((q) => q.people));
@@ -760,10 +785,13 @@ $("#quiz-modes").addEventListener("click", (e) => {
 
 function closeQuiz() {
   clearTimeout(nextTimer);
+  removeCrossKeyboard();
   $("#quiz").hidden = true;
   document.body.style.overflow = "";
   quiz = null;
   renderLearn();
+  quizReturnFocus?.focus?.({ preventScroll: true });
+  quizReturnFocus = null;
 }
 $("#quiz-close").addEventListener("click", closeQuiz);
 
@@ -1995,13 +2023,42 @@ function cwMake(src, daily) {
   return pz ? [pz] : [];
 }
 
+function loadCrossSession(game) {
+  const saved = store.get("cw-session:" + game.id, null);
+  if (!saved || !saved.puzzle || !Array.isArray(saved.puzzle.entries) || !saved.state) return null;
+  if (game.id === "cw-d" && saved.day !== dayKey()) return null;
+  // Normale Kreuzworträtsel dürfen nach Abschluss neu gestartet werden.
+  if (game.id !== "cw-d" && saved.state.finished) return null;
+  return saved;
+}
+
 function renderCross(pz) {
   const E = pz.entries, N = E.length;
-  quiz.questions = E; quiz.results = []; quiz.i = 0; quiz.points = 0;
+  const saved = quiz.crossSaved;
+  quiz.questions = E;
+  quiz.results = saved?.results || [];
+  quiz.i = 0;
+  quiz.points = saved?.points || 0;
 
   const at = {}; // Zelle -> { a: Wort-Nr., d: Wort-Nr. }
   E.forEach((e, i) => e.cells.forEach((k) => { (at[k] ??= {})[e.dir] = i; }));
-  const st = { vals: {}, locked: new Set(), wrong: new Set(), help: E.map(() => 0), hints: E.map(() => 0), done: new Set(), sel: E[0].cells[0], dir: E[0].dir, finished: false };
+  const st = {
+    vals: saved?.vals || {}, locked: new Set(saved?.locked || []), wrong: new Set(saved?.wrong || []),
+    help: saved?.help?.length === N ? saved.help : E.map(() => 0),
+    hints: saved?.hints?.length === N ? saved.hints : E.map(() => 0),
+    done: new Set(saved?.done || []),
+    sel: saved?.sel && pz.sol[saved.sel] ? saved.sel : E[0].cells[0],
+    dir: ["a", "d"].includes(saved?.dir) ? saved.dir : E[0].dir,
+    finished: !!saved?.finished,
+  };
+  const persist = () => store.set("cw-session:" + quiz.mode.id, {
+    day: dayKey(), puzzle: pz,
+    state: {
+      vals: st.vals, locked: [...st.locked], wrong: [...st.wrong], help: st.help,
+      hints: st.hints, done: [...st.done], sel: st.sel, dir: st.dir,
+      finished: st.finished, results: quiz.results, points: quiz.points,
+    },
+  });
 
   let grid = "";
   for (let y = 0; y < pz.h; y++) for (let x = 0; x < pz.w; x++) {
@@ -2105,6 +2162,7 @@ function renderCross(pz) {
     if (k === st.sel && c.a != null && c.d != null) st.dir = st.dir === "a" ? "d" : "a";
     else { st.sel = k; if (c[st.dir] == null) st.dir = st.dir === "a" ? "d" : "a"; }
     paint();
+    persist();
   });
   $("#cw-all").addEventListener("click", (ev) => {
     const b = ev.target.closest(".cw-li");
@@ -2113,6 +2171,7 @@ function renderCross(pz) {
     st.dir = e.dir;
     st.sel = e.cells.find((c) => !st.locked.has(c)) || e.cells[0];
     paint();
+    persist();
   });
   $(".cw-kb").addEventListener("click", (ev) => {
     const b = ev.target.closest("button");
@@ -2143,11 +2202,35 @@ function renderCross(pz) {
       for (const [k, v] of Object.entries(st.vals)) if (!st.locked.has(k) && v !== pz.sol[k]) st.wrong.add(k);
     }
     paint();
+    persist();
   });
+  // Externe Tastatur: normale Buchstaben, Zurück/Löschen und Prüfen.
+  cwKeyHandler = (ev) => {
+    if ($("#quiz").hidden || quiz?.mode.kind !== "cross" || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    if (ev.target instanceof HTMLElement && ev.target.matches("input, textarea, [contenteditable]")) return;
+    const ch = ev.key.toUpperCase();
+    if (/^[A-Z]$/.test(ch)) {
+      const key = $(".cw-key[data-ch='" + ch + "']");
+      if (key) { ev.preventDefault(); key.click(); }
+    } else if (ev.key === "Backspace" || ev.key === "Delete") {
+      ev.preventDefault(); $("#cw-back")?.click();
+    } else if (ev.key === "Enter" && !ev.target.closest?.("button")) {
+      ev.preventDefault(); $("#cw-check")?.click();
+    }
+  };
+  document.addEventListener("keydown", cwKeyHandler);
+  if (st.finished) {
+    $("#feedback").innerHTML = `<button class="btn wide" id="cw-end">Ergebnis ansehen</button>`;
+    $("#cw-end").addEventListener("click", renderResult);
+  }
   paint();
+  persist();
 }
 
 /* ---------- Zurück wischen: vom linken Rand nach rechts ---------- */
+window.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && goBack()) ev.preventDefault();
+});
 const TAB_ORDER = ["news", "lesen", "learn"];
 function goBack() {
   if (!$("#sheet").hidden) { sheetBack(); return true; }      // Profil oder Album
@@ -2225,7 +2308,8 @@ async function init() {
     MAP_MARKUP = MAPD.countries.map((m) => `<path class="land${m.i && inQuiz.has(m.i) ? "" : " bg"}" data-id="${m.i || ""}" d="${m.d}"/>`).join("");
   } catch { MAPD = null; }
   renderLearn();
-  if ("serviceWorker" in navigator && location.protocol === "https:") {
+  // Im Testproxy keine Offline-Caches oder PWA-Installationen anlegen.
+  if ("serviceWorker" in navigator && location.protocol === "https:" && location.hostname !== "raw.githack.com") {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 }

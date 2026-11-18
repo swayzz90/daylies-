@@ -34,8 +34,12 @@ self.addEventListener("fetch", (e) => {
         fetch(e.request, { cache: "no-store" })
           .then((res) => {
             clearTimeout(timer);
+            // Fehlerantworten niemals als gültige Nachrichten speichern.
+            if (!res.ok) { fromCache().then(resolve); return; }
             const copy = res.clone();
-            caches.open(VERSION).then((c) => c.put("news.json", copy));
+            caches.open(VERSION)
+              .then((c) => c.put("news.json", copy))
+              .catch(() => { /* Cache-Fehler dürfen Online-Daten nicht blockieren */ });
             resolve(res);
           })
           .catch(() => { clearTimeout(timer); fromCache().then(resolve); });
