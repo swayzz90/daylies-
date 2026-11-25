@@ -4,14 +4,14 @@
 
 :root {
   color-scheme: dark;
-  --bg: #151A23;
-  --surface: #1D2430;
-  --ink: #E7ECF3;
-  --muted: #93A0B3;
-  --line: #2A3342;
-  --accent: #93BCE0;
-  --accent-soft: #223347;
-  --on-accent: #0F1722;
+  --bg: #000000;
+  --surface: #0F0F0F;
+  --ink: #FFFFFF;
+  --muted: #A3A3A3;
+  --line: #262626;
+  --accent: #FFFFFF;
+  --accent-soft: #262626;
+  --on-accent: #000000;
   --good: #78C49A;
   --good-soft: #1B3328;
   --bad: #E58A7B;
@@ -566,7 +566,7 @@ a.btn { text-decoration: none; display: inline-block; text-align: center; }
   background: var(--surface); border: 1.5px solid var(--line); color: var(--ink);
   font: 700 clamp(0.8rem, 3.6vw, 1.1rem) var(--display); text-transform: uppercase;
 }
-.cw-cell.in { background: var(--accent-soft); border-color: #35506b; }
+.cw-cell.in { background: var(--accent-soft); border-color: #525252; }
 .cw-cell.sel { border-color: var(--accent); box-shadow: 0 0 0 1.5px var(--accent); }
 .cw-cell.ok { background: var(--good-soft); border-color: var(--good); }
 .cw-cell.bad { background: var(--bad-soft); border-color: var(--bad); }
