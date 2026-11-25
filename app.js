@@ -337,7 +337,7 @@ function impulsRead(id) {
 }
 
 function renderImpuls() {
-  const host = $("#view-lesen .news-tools");
+  const host = $("#lesen-list");
   if (!host) return;
   if (!impulsBox) {
     impulsBox = document.createElement("section");
