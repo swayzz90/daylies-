@@ -719,6 +719,14 @@ function renderLearn() {
       ir.innerHTML = row({ attr: 'data-open="impuls"', icon: is.today >= is.total ? "✓" : "📖", iconText: is.today >= is.total, title: "Tagesimpuls",
         sub: is.today >= is.total ? "Heute gelesen. Stark." : `${is.today} von ${is.total} Artikeln heute`, pct: Math.round((is.today / is.total) * 100) });
     } else ir.innerHTML = "";
+    let zr = $("#zitate-row");
+    if (!zr) { zr = document.createElement("div"); zr.id = "zitate-row"; zr.className = "modes"; ir.insertAdjacentElement("afterend", zr); }
+    if (ZITATE.length) {
+      const zs = zSt(), zread = new Set(zs.read), zt = zToday(), fresh = zt.filter((z) => !zread.has(z.id)).length;
+      zr.innerHTML = row({ attr: 'data-open="zitate"', icon: "💬", title: "Zitate",
+        sub: `${fresh ? `${fresh} neue für heute` : "Heute gelesen"} · ${zread.size} von ${ZITATE.length} in der Bibliothek`,
+        pct: Math.round((zread.size / ZITATE.length) * 100) });
+    } else zr.innerHTML = "";
     know.innerHTML = GAMES.filter((g) => g.know && (!g.avail || g.avail())).map(gameRow).join("");
     const found = discovered().length;
     $("#atlas-row").innerHTML = row({
@@ -760,6 +768,7 @@ $("#view-learn").addEventListener("click", (e) => {
   if (b.dataset.game) startQuiz(gameById(b.dataset.game));
   else if (b.dataset.open === "deck") startDeck();
   else if (b.dataset.open === "atlas") openSheet(atlasView);
+  else if (b.dataset.open === "zitate") openSheet(zitateView);
   else if (b.dataset.open === "impuls") { showTab("lesen"); scroller.scrollTo(0, 0); }
 });
 
@@ -1319,6 +1328,141 @@ function atlasView() {
   $("#sheet-body").querySelectorAll("[data-by]").forEach((b) => b.addEventListener("click", () => { atlasBy = b.dataset.by; atlasView(); }));
 }
 
+/* ---------- Zitate-Bibliothek: lesen und verstehen ---------- */
+let ZITATE = [];
+const ZT = { philosophie: "Philosophie", wirtschaft: "Wirtschaft & Strategie", politik: "Politik & Geschichte", wissenschaft: "Wissenschaft", kultur: "Kultur & Literatur" };
+const ZE = { b: ["Belegt", "ok"], s: ["Sinngemäß überliefert", "mid"], u: ["Umstritten", "mid"], z: ["Falsch zugeschrieben", "bad"] };
+const ZDAY = 3;
+const ZVOTE = [["ja", "Ja"], ["teils", "Teilweise"], ["nein", "Nein"]];
+let zFilter = "alle", zQuery = "";
+const zSt = () => { const s = store.get("zitate", {}); return { read: s.read || [], vote: s.vote || {}, day: s.day || "", today: s.today || [] }; };
+const zById = (id) => ZITATE.find((z) => z.id === id);
+function zWho(z) {
+  const p = z.p && PEOPLE[z.p];
+  return p ? { name: p.name, role: p.role, years: lifeSpan(p), p } : { name: z.w, role: z.r, years: z.y, p: null };
+}
+function zToday() {
+  const st = zSt();
+  if (st.day === dayKey() && st.today.length && st.today.every(zById)) return st.today.map(zById);
+  const read = new Set(st.read);
+  const rng = seedRng(seedHash("zitate-" + dayKey()));
+  let pool = ZITATE.filter((z) => !read.has(z.id));
+  if (pool.length < ZDAY) pool = ZITATE.slice();
+  const out = [];
+  for (const z of seedShuffle(pool, rng)) {
+    if (out.length >= ZDAY) break;
+    if (!out.some((o) => o.t === z.t)) out.push(z);
+  }
+  for (const z of seedShuffle(pool, rng)) if (out.length < ZDAY && !out.includes(z)) out.push(z);
+  store.set("zitate", { ...st, day: dayKey(), today: out.map((z) => z.id) });
+  return out;
+}
+function zMarkRead(id) {
+  const st = zSt();
+  if (!st.read.includes(id)) { st.read.push(id); store.set("zitate", st); }
+  const k = dayKey();
+  if (!activity.includes(k)) { activity.push(k); activity = activity.slice(-400); store.set("activity", activity); }
+}
+function zAvatar(z) {
+  const w = zWho(z);
+  return w.p ? avatar(w.p, "sm") : `<span class="avatar sm" aria-hidden="true"><span class="ini">${esc(initials(w.name))}</span></span>`;
+}
+function zRow(z, read) {
+  const w = zWho(z);
+  const flag = z.e === "z" || z.e === "u" ? `<span class="z-badge ${ZE[z.e][1]}">${ZE[z.e][0]}</span>` : "";
+  return `<button class="z-row${read.has(z.id) ? " read" : ""}" data-z="${z.id}" type="button">
+    ${zAvatar(z)}
+    <span class="z-row-text"><span class="z-row-q">„${esc(z.q)}“</span>
+    <span class="z-row-who">${read.has(z.id) ? "✓ " : ""}${esc(w.name)}${flag ? " · " : ""}${flag}</span></span></button>`;
+}
+function zFiltered() {
+  const read = new Set(zSt().read);
+  const q = zQuery.trim().toLowerCase();
+  return ZITATE.filter((z) =>
+    (zFilter === "alle" || z.t === zFilter || (zFilter === "falsch" && (z.e === "z" || z.e === "u")) || (zFilter === "neu" && !read.has(z.id))) &&
+    (!q || (z.q + " " + zWho(z).name + " " + z.k).toLowerCase().includes(q)));
+}
+function zRenderList() {
+  const box = $("#z-all");
+  if (!box) return;
+  const read = new Set(zSt().read);
+  const list = zFiltered();
+  box.innerHTML = list.length ? list.map((z) => zRow(z, read)).join("") : `<div class="empty"><strong>Nichts gefunden</strong>Versuch einen anderen Begriff oder Filter.</div>`;
+}
+function zitateView() {
+  $("#sheet-title").textContent = "Zitate";
+  const read = new Set(zSt().read);
+  const today = zToday();
+  const chips = [["alle", "Alle"], ["neu", "Ungelesen"], ...Object.entries(ZT), ["falsch", "Falsch zugeschrieben"]];
+  $("#sheet-body").innerHTML = `
+    <p class="page-sub">${read.size} von ${ZITATE.length} gelesen. Jeden Tag drei neue, die ganze Sammlung steht dir offen.</p>
+    <h3 class="z-h">Heute für dich</h3>
+    <div class="z-list">${today.map((z) => zRow(z, read)).join("")}</div>
+    <h3 class="z-h">Bibliothek</h3>
+    <div class="chips z-chips" role="radiogroup" aria-label="Filter">${chips.map(([k, l]) => `<button role="radio" aria-checked="${k === zFilter}" data-zf="${k}">${l}</button>`).join("")}</div>
+    <label class="search z-search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      <input id="z-q" type="search" placeholder="Zitat oder Person suchen" autocomplete="off" value="${esc(zQuery)}">
+    </label>
+    <div class="z-list" id="z-all"></div>`;
+  zRenderList();
+  const body = $("#sheet-body");
+  body.querySelectorAll("[data-zf]").forEach((b) => b.addEventListener("click", () => {
+    zFilter = b.dataset.zf;
+    body.querySelectorAll("[data-zf]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+    zRenderList();
+  }));
+  $("#z-q").addEventListener("input", (e) => { zQuery = e.target.value; zRenderList(); });
+  body.querySelectorAll(".z-list").forEach((l) => l.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-z]");
+    if (!b) return;
+    const order = b.closest("#z-all") ? zFiltered().map((z) => z.id) : today.map((z) => z.id);
+    openSheet(() => zitatDetail(b.dataset.z, order));
+  }));
+}
+function zitatDetail(id, order, reveal = false) {
+  const z = zById(id);
+  if (!z) { sheetBack(); return; }
+  zMarkRead(id);
+  const w = zWho(z);
+  const vote = zSt().vote[id];
+  const show = vote || reveal;
+  const idx = order.indexOf(id);
+  const next = order[idx + 1] || null;
+  $("#sheet-title").textContent = ZT[z.t];
+  $("#sheet-body").innerHTML = `
+    <article class="zd">
+      <span class="z-badge ${ZE[z.e][1]}">${ZE[z.e][0]}</span>
+      <blockquote class="quote zd-q">„${esc(z.q)}“</blockquote>
+      <div class="zd-who">${zAvatar(z)}<span><strong>${esc(w.name)}</strong><span class="muted">${esc(w.role || "")}${w.years ? `, ${esc(w.years)}` : ""}</span></span></div>
+      <p class="zd-src">${esc(z.s)}</p>
+      <h3>Kontext</h3><p>${esc(z.k)}</p>
+      <h3>Bedeutung</h3><p>${esc(z.m)}</p>
+      <div class="zd-vote">
+        <h3>Heute noch gültig?</h3>
+        <p class="muted">Deine Einschätzung. Es gibt kein Richtig oder Falsch.</p>
+        <div class="zd-vote-btns">${ZVOTE.map(([k, l]) => `<button type="button" data-vote="${k}" aria-pressed="${vote === k}">${l}</button>`).join("")}</div>
+        ${show ? "" : `<button class="zd-skip" type="button" data-reveal>Ohne Antwort weiterlesen</button>`}
+      </div>
+      ${show ? `<h3>Heute</h3><p>${esc(z.h)}</p>` : ""}
+      ${w.p ? `<h3>Zur Person</h3><p>${esc(w.p.short || "")}</p><button class="btn ghost wide" type="button" data-person="${w.p.id}">Profil von ${esc(w.p.name)} öffnen</button>` : ""}
+      <div class="zd-nav">
+        ${next ? `<button class="btn wide" type="button" data-next="${next}">Nächstes Zitat</button>` : `<p class="muted">Das war das letzte Zitat in dieser Auswahl.</p>`}
+      </div>
+    </article>`;
+  const body = $("#sheet-body");
+  const swap = (fn) => { sheetStack[sheetStack.length - 1] = fn; fn(); };
+  body.querySelectorAll("[data-vote]").forEach((b) => b.addEventListener("click", () => {
+    const st = zSt(); st.vote[id] = b.dataset.vote; store.set("zitate", st);
+    const y = body.scrollTop; zitatDetail(id, order); body.scrollTop = y;
+  }));
+  body.querySelector("[data-reveal]")?.addEventListener("click", () => {
+    const y = body.scrollTop; swap(() => zitatDetail(id, order, true)); body.scrollTop = y;
+  });
+  body.querySelector("[data-person]")?.addEventListener("click", (e) => openProfile(e.currentTarget.dataset.person));
+  body.querySelector("[data-next]")?.addEventListener("click", (e) => { const n = e.currentTarget.dataset.next; swap(() => zitatDetail(n, order)); body.scrollTop = 0; });
+}
+
 /* ---------- Tagesstapel ---------- */
 const DECK_SIZE = 10;
 function buildDeck() {
@@ -1496,6 +1640,7 @@ async function init() {
     CONTENT.cards.forEach((c) => { CARD[c.id] = c; });
     buildGraph();
   } catch { CONTENT = null; }
+  try { ZITATE = (await get("zitate.json")).quotes || []; } catch { ZITATE = []; }
   try {
     PORTRAITS = (await get("portraits/portraits.json")).items || {};
   } catch { PORTRAITS = {}; }
