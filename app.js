@@ -209,6 +209,7 @@ function renderFeed(section) {
   const ui = feedUI[section];
   const list = $(ui.list);
   const box = $(ui.topics);
+  if (section === "lesen") renderImpuls();
 
   if (section === "news") {
     const dateText = new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" });
@@ -280,6 +281,99 @@ function renderFeed(section) {
     const y = pendingScroll.y; pendingScroll = null;
     requestAnimationFrame(() => { lastY = y; scroller.scrollTo(0, y); });
   }
+}
+
+/* ---------- Tagesimpuls (Lesen-Tab) ----------
+   Jeden Tag 3 Artikel aus verschiedenen Themen, pro Tag fest gewählt. Gelesene zählen für Tagesziel und Serie. */
+const IMPULS_N = 3, IMPULS_WEEK = 10;
+let impulsBox = null;
+const impulsSt = () => store.get("impuls", { day: "", lang: "", ids: [], log: {} });
+
+function impulsToday() {
+  const st = impulsSt();
+  const items = news.items.filter((it) => it.section === "lesen");
+  const byId = new Map(items.map((it) => [it.id, it]));
+  if (st.day === dayKey() && st.lang === langFilter && st.ids.length && st.ids.every((id) => byId.has(id))) return st.ids.map((id) => byId.get(id));
+  if (!items.length) return [];
+  const rng = cwMulberry(cwHash("impuls-" + dayKey() + langFilter));
+  let pool = items.filter((it) => (langFilter === "alle" || it.lang === langFilter) && it.title && (it.summary || "").length > 40);
+  const fresh = pool.filter((it) => !readIds.has(it.id));
+  if (fresh.length >= IMPULS_N) pool = fresh;
+  const byTopic = {};
+  pool.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  pool.forEach((it) => (byTopic[it.topic] ??= []).push(it));
+  const topics = cwShuffle(Object.keys(byTopic), rng);
+  const out = [];
+  for (const t of topics) {
+    if (out.length >= IMPULS_N) break;
+    const cand = byTopic[t].slice(0, 6).filter((it) => !out.some((o) => o.source === it.source));
+    const list = cand.length ? cand : byTopic[t].slice(0, 6);
+    out.push(list[Math.floor(rng() * list.length)]);
+  }
+  for (const it of cwShuffle(pool, rng)) if (out.length < IMPULS_N && !out.includes(it)) out.push(it);
+  const ids = out.map((it) => it.id);
+  const log = {};
+  for (const [d, v] of Object.entries(st.log || {})) if (Date.now() - new Date(d).getTime() < 14 * 86400000) log[d] = v;
+  store.set("impuls", { day: dayKey(), lang: langFilter, ids, log });
+  return out;
+}
+
+function impulsStats() {
+  const st = impulsSt();
+  const today = st.day === dayKey() ? (st.log[dayKey()] || []).filter((id) => st.ids.includes(id)).length : 0;
+  let week = 0;
+  for (let i = 0; i < 7; i++) { const d = new Date(); d.setDate(d.getDate() - i); week += (st.log?.[dayKey(d)] || []).length; }
+  return { today, week, total: st.day === dayKey() ? st.ids.length : IMPULS_N };
+}
+
+function impulsRead(id) {
+  const st = impulsSt();
+  if (st.day !== dayKey() || !st.ids.includes(id)) return;
+  const k = dayKey();
+  st.log ??= {};
+  st.log[k] = [...new Set([...(st.log[k] || []), id])];
+  store.set("impuls", st);
+  if (!activity.includes(k)) { activity.push(k); activity = activity.slice(-400); store.set("activity", activity); }
+}
+
+function renderImpuls() {
+  const host = $("#view-lesen .news-tools");
+  if (!host) return;
+  if (!impulsBox) {
+    impulsBox = document.createElement("section");
+    impulsBox.className = "impuls";
+    impulsBox.addEventListener("click", (e) => {
+      const a = e.target.closest("a[data-id]");
+      if (!a) return;
+      saveScroll();
+      markRead(a.dataset.id);
+      impulsRead(a.dataset.id);
+      a.classList.add("read");
+      renderImpulsFoot();
+    });
+    host.before(impulsBox);
+  }
+  const items = impulsToday();
+  if (!items.length) { impulsBox.innerHTML = ""; return; }
+  impulsBox.innerHTML = `
+    <h2 class="section-title">Heute für dich</h2>
+    <p class="impuls-sub">${items.length} Artikel aus verschiedenen Themen. Mehr musst du heute nicht lesen.</p>
+    ${items.map((it) => `
+      <a class="impuls-item${readIds.has(it.id) ? " read" : ""}" href="${esc(it.link)}" target="_blank" rel="noopener" data-id="${esc(it.id)}">
+        <span class="impuls-meta">${esc(TOPICS[it.topic] || "")}${TOPICS[it.topic] ? " · " : ""}${esc(it.source)}${it.lang === "en" ? " · EN" : ""}</span>
+        <span class="impuls-title">${esc(it.title)}</span>
+        <span class="impuls-text">${esc(it.summary || "")}</span>
+      </a>`).join("")}
+    <div class="impuls-foot" id="impuls-foot"></div>`;
+  renderImpulsFoot();
+}
+function renderImpulsFoot() {
+  const f = $("#impuls-foot");
+  if (!f) return;
+  const s = impulsStats();
+  f.textContent = s.today >= s.total && s.total
+    ? `Heute geschafft. Diese Woche ${s.week} von ${IMPULS_WEEK} Impulsen.`
+    : `Heute ${s.today} von ${s.total}. Diese Woche ${s.week} von ${IMPULS_WEEK}.`;
 }
 
 /* Scroll-Position merken, damit die Liste nach dem Zurückkehren nicht oben neu startet */
@@ -668,6 +762,14 @@ function renderLearn() {
       sub: done ? "Heute geschafft. Morgen kommen 10 neue Karten." : `${d.pos} von ${d.ids.length} Karten heute${d.reviews ? `, ${d.reviews} Wiederholungen dabei` : ""}`,
       pct: Math.round((d.pos / d.ids.length) * 100),
     });
+    let ir = $("#impuls-row");
+    if (!ir) { ir = document.createElement("div"); ir.id = "impuls-row"; ir.className = "modes"; $("#deck-row").insertAdjacentElement("afterend", ir); }
+    if (news.items.some((it) => it.section === "lesen")) {
+      impulsToday();
+      const is = impulsStats();
+      ir.innerHTML = row({ attr: 'data-open="impuls"', icon: is.today >= is.total ? "✓" : "📖", iconText: is.today >= is.total, title: "Tagesimpuls",
+        sub: is.today >= is.total ? "Heute gelesen. Stark." : `${is.today} von ${is.total} Artikeln heute`, pct: Math.round((is.today / is.total) * 100) });
+    } else ir.innerHTML = "";
     know.innerHTML = GAMES.filter((g) => g.know && (!g.avail || g.avail())).map(gameRow).join("");
     const found = discovered().length;
     $("#atlas-row").innerHTML = row({
@@ -720,6 +822,7 @@ $("#view-learn").addEventListener("click", (e) => {
   if (b.dataset.game) startQuiz(gameById(b.dataset.game));
   else if (b.dataset.open === "deck") startDeck();
   else if (b.dataset.open === "atlas") openSheet(atlasView);
+  else if (b.dataset.open === "impuls") { showTab("lesen"); scroller.scrollTo(0, 0); }
 });
 
 /* ---------- Quiz-Rahmen ---------- */
