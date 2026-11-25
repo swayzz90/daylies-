@@ -286,6 +286,16 @@ function renderFeed(section) {
 /* ---------- Tagesimpuls (Lesen-Tab) ----------
    Jeden Tag 3 Artikel aus verschiedenen Themen, pro Tag fest gewählt. Gelesene zählen für Tagesziel und Serie. */
 const IMPULS_N = 3, IMPULS_WEEK = 10;
+const seedHash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+function seedRng(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function seedShuffle(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
 let impulsBox = null;
 const impulsSt = () => store.get("impuls", { day: "", lang: "", ids: [], log: {} });
 
@@ -295,14 +305,14 @@ function impulsToday() {
   const byId = new Map(items.map((it) => [it.id, it]));
   if (st.day === dayKey() && st.lang === langFilter && st.ids.length && st.ids.every((id) => byId.has(id))) return st.ids.map((id) => byId.get(id));
   if (!items.length) return [];
-  const rng = cwMulberry(cwHash("impuls-" + dayKey() + langFilter));
+  const rng = seedRng(seedHash("impuls-" + dayKey() + langFilter));
   let pool = items.filter((it) => (langFilter === "alle" || it.lang === langFilter) && it.title && (it.summary || "").length > 40);
   const fresh = pool.filter((it) => !readIds.has(it.id));
   if (fresh.length >= IMPULS_N) pool = fresh;
   const byTopic = {};
   pool.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   pool.forEach((it) => (byTopic[it.topic] ??= []).push(it));
-  const topics = cwShuffle(Object.keys(byTopic), rng);
+  const topics = seedShuffle(Object.keys(byTopic), rng);
   const out = [];
   for (const t of topics) {
     if (out.length >= IMPULS_N) break;
@@ -310,7 +320,7 @@ function impulsToday() {
     const list = cand.length ? cand : byTopic[t].slice(0, 6);
     out.push(list[Math.floor(rng() * list.length)]);
   }
-  for (const it of cwShuffle(pool, rng)) if (out.length < IMPULS_N && !out.includes(it)) out.push(it);
+  for (const it of seedShuffle(pool, rng)) if (out.length < IMPULS_N && !out.includes(it)) out.push(it);
   const ids = out.map((it) => it.id);
   const log = {};
   for (const [d, v] of Object.entries(st.log || {})) if (Date.now() - new Date(d).getTime() < 14 * 86400000) log[d] = v;
@@ -495,7 +505,6 @@ document.addEventListener("visibilitychange", () => {
 let countries = [];
 let CONTENT = null;        // Ereignisse, Aussagen, Karten, Personen (content.json)
 let MAPD = null;           // Weltkarte (map.json)
-let CHEM = null;           // Chemielabor-Aufgaben (aus chemie.json gebaut)
 let MAP_MARKUP = "";
 const PEOPLE = {};         // id -> Person
 let PORTRAITS = {};        // id -> { file, artist, license, page, v } (portraits/portraits.json)
@@ -566,41 +575,12 @@ const GAMES = [
   ...COUNTRY_MODES, MAP_MODE,
   { id: "tf", kind: "tf", title: "Wahr oder falsch", sub: "Stimmt die Aussage?", icon: "W/F", iconText: true, sr: true, short: "Wahr/Falsch", know: true,
     pick: () => pickFrom("tf", CONTENT.facts) },
-  { id: "before", kind: "before", title: "Früher oder später?", sub: "Welches Ereignis kam zuerst?", icon: "⏳", short: "Früher/Später", know: true,
-    pick: () => pickPairs() },
-  { id: "year", kind: "year", title: "Jahr schätzen", sub: "Je näher, desto mehr Punkte", icon: "📅", scored: true, short: "Jahr schätzen", know: true,
-    pick: () => shuffle(CONTENT.events).slice(0, 10) },
-  { id: "timeline", kind: "timeline", title: "Zeitstrahl", sub: "Fünf Ereignisse ordnen", icon: "📜", short: "Zeitstrahl", know: true,
-    pick: () => pickSets(5) },
   { id: "who", kind: "who", title: "Die Akte", sub: "Foto enthüllen, Person erraten", icon: "🕵️", sr: true, scored: true, short: "Die Akte", know: true,
     pick: () => pickWho() },
-  { id: "duel", kind: "duel", title: "Zeitgenossen-Duell", sub: "Wer lebte früher, wer passt nicht dazu?", icon: "⚔️", short: "Duell", know: true,
-    pick: () => pickDuels() },
-  { id: "quote", kind: "quote", title: "Zitat-Rätsel", sub: "Von wem stammt das Zitat?", icon: "💬", sr: true, short: "Zitate", know: true,
-    pick: () => pickFrom("quote", CONTENT.quotes) },
   { id: "links", kind: "links", title: "Verbindungen", sub: "Finde den Weg von Person zu Person", icon: "🕸️", scored: true, short: "Verbindungen", know: true,
     pick: () => pickRoutes() },
   { id: "face", kind: "face", title: "Gesichter", sub: "Porträt sehen, Person wählen", icon: "🖼️", sr: true, short: "Gesichter", know: true,
     avail: () => hasPhotos(), pick: () => pickFrom("face", CONTENT.people.filter((p) => photoUrl(p.id))) },
-  { id: "c-salt", kind: "chem", group: "chem", title: "Salzbaukasten", sub: "Ionen zu Formel und Name", icon: "NaCl", iconText: true, sr: true, short: "Salze",
-    avail: () => !!CHEM, pool: () => CHEM.salt, pick: () => pickFrom("c-salt", CHEM.salt) },
-  { id: "c-redox", kind: "chem", group: "chem", title: "Redox", sub: "Oxidationszahlen, Elektronen, Spannungsreihe", icon: "e⁻", iconText: true, sr: true, short: "Redox",
-    avail: () => !!CHEM, pool: () => CHEM.redox, pick: () => pickFrom("c-redox", CHEM.redox) },
-  { id: "c-sb", kind: "chem", group: "chem", title: "Säuren und Basen", sub: "Formeln, Abkürzungen, Paare, pH", icon: "pH", iconText: true, sr: true, short: "Säure/Base",
-    avail: () => !!CHEM, pool: () => CHEM.sb, pick: () => pickFrom("c-sb", CHEM.sb) },
-  { id: "c-titr", kind: "chem", group: "chem", title: "Titrationskurve", sub: "Kurve lesen, Indikator wählen", icon: "📈", sr: true, short: "Titration",
-    avail: () => !!CHEM, pool: () => CHEM.titr, pick: () => pickFrom("c-titr", CHEM.titr) },
-  { id: "c-analytik", kind: "chem", group: "chem", title: "Analytik-Detektiv", sub: "Methode wählen, IR und NMR deuten", icon: "IR", iconText: true, sr: true, short: "Analytik",
-    avail: () => !!CHEM, pool: () => CHEM.analytik, pick: () => pickFrom("c-analytik", CHEM.analytik) },
-  { id: "cw", kind: "cross", group: "cross", pmode: "cross", title: "Kreuzwort Mix", sub: "Personen und Länder, aus deinem Lernkasten", icon: "ABC", iconText: true, sr: true, scored: true, short: "Kreuzwort",
-    avail: () => !!CONTENT, pool: () => cwPool("mix"), pick: () => cwMake("mix", false) },
-  { id: "cw-p", kind: "cross", group: "cross", pmode: "cross", title: "Kreuzwort Personen", sub: "Nachnamen erraten, Hinweise wie in der Akte", icon: "👤", sr: true, scored: true, short: "Kreuz Personen",
-    avail: () => !!CONTENT, pool: () => cwPool("p"), pick: () => cwMake("p", false) },
-  { id: "cw-l", kind: "cross", group: "cross", pmode: "cross", title: "Kreuzwort Länder", sub: "Hauptstädte und Länder", icon: "🌍", sr: true, scored: true, short: "Kreuz Länder",
-    avail: () => countries.length > 0, pool: () => cwPool("l"), pick: () => cwMake("l", false) },
-  { id: "cw-d", kind: "cross", group: "cross", pmode: "cross", title: "Tagesrätsel", sub: "Jeden Tag ein neues Rätsel", icon: "📅", scored: true, noAgain: true,
-    noAgainMsg: "Das Tagesrätsel ist gelöst. Morgen wartet ein neues.", short: "Tagesrätsel",
-    avail: () => !!CONTENT, pool: () => cwPool("mix"), pick: () => cwMake("mix", true) },
 ];
 const DECK = { id: "cards", kind: "deck", title: "Tagesstapel", sr: true, noAgain: true, short: "Tagesstapel" };
 const gameById = (id) => GAMES.find((g) => g.id === id);
@@ -648,36 +628,6 @@ function options(mode, target) {
   return shuffle([target, ...[...near, ...far].slice(0, 3)]);
 }
 
-// Paare für „Früher oder später?“
-function pickPairs(n = 10) {
-  const ev = shuffle(CONTENT.events), used = new Set(), out = [];
-  for (const a of ev) {
-    if (used.has(a.id)) continue;
-    const cand = ev.filter((x) => !used.has(x.id) && x.id !== a.id && Math.abs(x.y - a.y) >= 8);
-    const near = cand.filter((x) => Math.abs(x.y - a.y) <= 200);
-    const list = near.length && Math.random() < 0.7 ? near : cand;
-    if (!list.length) continue;
-    const b = list[Math.floor(Math.random() * list.length)];
-    used.add(a.id); used.add(b.id); out.push([a, b]);
-    if (out.length >= n) break;
-  }
-  return out;
-}
-
-// Fünfer-Gruppen für den Zeitstrahl (Abstand mindestens 6 Jahre)
-function pickSets(n = 5, size = 5) {
-  const used = new Set(), sets = [];
-  for (let tries = 0; tries < 200 && sets.length < n; tries++) {
-    const set = [];
-    for (const e of shuffle(CONTENT.events)) {
-      if (used.has(e.id)) continue;
-      if (set.every((x) => Math.abs(x.y - e.y) >= 6)) set.push(e);
-      if (set.length === size) break;
-    }
-    if (set.length === size) { set.forEach((e) => used.add(e.id)); sets.push(set); }
-  }
-  return sets;
-}
 
 /* ---------- Lernen-Übersicht ---------- */
 function streakInfo() {
@@ -710,7 +660,6 @@ function gameStats(g) {
   else if (g.id === "tf") list = CONTENT?.facts;
   else if (g.id === "who") list = CONTENT?.people;
   else if (g.id === "face") list = CONTENT?.people.filter((p) => photoUrl(p.id));
-  else if (g.id === "quote") list = CONTENT?.quotes;
   else if (g.pool) list = g.pool();
   if (list) {
     const pm = g.pmode || g.id;
@@ -781,17 +730,6 @@ function renderLearn() {
     know.innerHTML = `<div class="empty"><strong>Inhalte fehlen</strong>Die Datei content.json konnte nicht geladen werden.</div>`;
   }
 
-  if (CHEM) {
-    let cb = $("#chem-block");
-    if (!cb) { cb = document.createElement("div"); cb.id = "chem-block"; $("#atlas-row").insertAdjacentElement("afterend", cb); }
-    cb.innerHTML = `<h2 class="section-title chem-title">Chemie</h2><div class="modes">${GAMES.filter((g) => g.group === "chem").map(gameRow).join("")}</div>`;
-  }
-  if (CONTENT) {
-    let xb = $("#cross-block");
-    if (!xb) { xb = document.createElement("div"); xb.id = "cross-block"; ($("#chem-block") || $("#atlas-row")).insertAdjacentElement("afterend", xb); }
-    xb.innerHTML = `<h2 class="section-title chem-title">Kreuzworträtsel</h2><div class="modes">${GAMES.filter((g) => g.group === "cross" && (!g.avail || g.avail())).map(gameRow).join("")}</div>`;
-  }
-
   // Welt-Quiz
   $("#regions").innerHTML = REGIONS.map((r) =>
     `<button role="radio" aria-checked="${r === region}" data-region="${r}">${r}</button>`).join("");
@@ -841,7 +779,6 @@ function startQuiz(game) {
   quiz = { mode: game, questions, i: 0, results: [], points: 0 };
   if (game.kind === "who") preloadPhotos(questions.map((q) => q.p));
   else if (game.kind === "face") preloadPhotos(questions);
-  else if (game.kind === "duel") preloadPhotos(questions.flatMap((q) => q.people));
   showQuiz();
   renderModeSwitcher();
   renderQuestion();
@@ -880,8 +817,8 @@ function renderDots() {
 }
 
 const RENDER = {
-  country: (t) => renderCountry(t), map: (t) => renderMap(t), tf: (t) => renderTF(t), before: (t) => renderBefore(t),
-  year: (t) => renderYear(t), timeline: (t) => renderTimeline(t), deck: (t) => renderDeck(t), face: (t) => renderFace(t), duel: (t) => renderDuel(t), quote: (t) => renderQuote(t), links: (t) => renderLinks(t), chem: (t) => renderChem(t), cross: (t) => renderCross(t),
+  country: (t) => renderCountry(t), map: (t) => renderMap(t), tf: (t) => renderTF(t), 
+  deck: (t) => renderDeck(t), face: (t) => renderFace(t), links: (t) => renderLinks(t), 
   who: (t) => (t.mode === "learn" ? renderLearnCard(t) : renderAkte(t)),
 };
 function renderQuestion() {
@@ -1000,105 +937,6 @@ function renderTF(f) {
       feedback: `<p><strong>${f.a ? "Wahr" : "Falsch"}.</strong> ${esc(f.e)}</p>`,
     });
   }, { once: true }));
-}
-
-/* ---------- Früher oder später? ---------- */
-function renderBefore([a, b]) {
-  $("#quiz-body").innerHTML = `
-    <div class="prompt short"><p class="prompt-label">Was geschah früher?</p></div>
-    <div class="answers">
-      <button class="answer" data-i="0">${esc(a.t)}<span class="hint"></span></button>
-      <button class="answer" data-i="1">${esc(b.t)}<span class="hint"></span></button>
-    </div>${FEEDBACK}`;
-  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
-    const first = a.y < b.y ? 0 : 1;
-    const correct = Number(btn.dataset.i) === first;
-    const btns = [...$("#quiz-body").querySelectorAll(".answer")];
-    btns.forEach((x, i) => { x.disabled = true; x.querySelector(".hint").textContent = fmtYear((i ? b : a).y); if (i === first) x.classList.add("correct"); });
-    if (!correct) btn.classList.add("wrong");
-    const early = first ? b : a;
-    settle({
-      correct, delay: 1500,
-      show: { icon: "✗", title: `${a.t} oder ${b.t}`, sub: `${fmtYear(a.y)} und ${fmtYear(b.y)}` },
-      feedback: correct ? "" : `<p>Früher war: <strong>${esc(early.t)}</strong> (${fmtYear(early.y)})</p>`,
-    });
-  }, { once: true }));
-}
-
-/* ---------- Jahr schätzen ---------- */
-function renderYear(e) {
-  $("#quiz-body").innerHTML = `
-    <div class="prompt"><p class="prompt-label">In welchem Jahr geschah das?</p><h2 class="prompt-statement">${esc(e.t)}</h2></div>
-    <div class="year-row">
-      <input id="yr" type="number" inputmode="numeric" placeholder="Jahr" aria-label="Jahr">
-      <button class="lang-btn" id="era" type="button" data-bc="0">n. Chr.</button>
-    </div>
-    <button class="btn wide" id="check">Prüfen</button>
-    ${FEEDBACK}`;
-  const input = $("#yr"), era = $("#era"), check = $("#check");
-  era.addEventListener("click", () => {
-    const bc = era.dataset.bc === "1" ? "0" : "1";
-    era.dataset.bc = bc;
-    era.textContent = bc === "1" ? "v. Chr." : "n. Chr.";
-  });
-  const submit = () => {
-    const raw = parseInt(input.value, 10);
-    if (Number.isNaN(raw) || check.disabled) return;
-    const guess = era.dataset.bc === "1" ? -Math.abs(raw) : Math.abs(raw);
-    const err = Math.abs(guess - e.y);
-    const tol = Math.max(3, Math.round(Math.abs(THIS_YEAR - e.y) * 0.04));
-    const correct = err <= tol;
-    const pts = Math.max(0, Math.round(100 * (1 - err / (tol * 4))));
-    input.disabled = true; era.disabled = true; check.disabled = true; check.hidden = true;
-    settle({
-      correct, auto: false, pts,
-      show: { icon: correct ? "✓" : "✗", title: e.t, sub: `Richtig: ${fmtYear(e.y)}, dein Tipp: ${fmtYear(guess)}` },
-      feedback: `<p><strong>${fmtYear(e.y)}</strong><br>${err === 0 ? "Auf das Jahr genau!" : `${err} ${err === 1 ? "Jahr" : "Jahre"} daneben`} · ${pts} Punkte</p>`,
-    });
-  };
-  check.addEventListener("click", submit);
-  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") submit(); });
-}
-
-/* ---------- Zeitstrahl ---------- */
-function renderTimeline(set) {
-  const order = [];
-  const shuffled = shuffle(set);
-  let finished = false;
-  $("#quiz-body").innerHTML = `
-    <div class="prompt short"><p class="prompt-label">Tippe die Ereignisse der Reihe nach an: das älteste zuerst.</p></div>
-    <div class="tl" id="tl"></div>
-    <div class="tl-actions"><button class="btn ghost" id="undo" type="button">Letzte Auswahl zurücknehmen</button></div>
-    ${FEEDBACK}`;
-  const draw = () => {
-    $("#tl").innerHTML = shuffled.map((ev) => {
-      const k = order.indexOf(ev.id);
-      return `<button class="tl-item${k >= 0 ? " picked" : ""}" data-id="${ev.id}" ${k >= 0 || finished ? "disabled" : ""}>
-        ${k >= 0 ? `<b class="tl-badge">${k + 1}</b>` : `<b class="tl-badge empty"></b>`}<span>${esc(ev.t)}</span></button>`;
-    }).join("");
-    $("#undo").disabled = finished || order.length === 0;
-  };
-  draw();
-  $("#tl").addEventListener("click", (e) => {
-    const b = e.target.closest(".tl-item");
-    if (!b || finished) return;
-    order.push(b.dataset.id);
-    if (order.length < set.length) { draw(); return; }
-    finished = true;
-    draw();
-    $("#undo").hidden = true;
-    const sorted = [...set].sort((x, y) => x.y - y.y);
-    const right = order.filter((id, i) => id === sorted[i].id).length;
-    const correct = right === set.length;
-    settle({
-      correct, auto: false,
-      show: { icon: correct ? "✓" : "✗", title: "Zeitstrahl", sub: `${right} von ${set.length} an der richtigen Stelle` },
-      feedback: `<div class="fb-text"><p><strong>${right} von ${set.length}</strong> an der richtigen Stelle.</p>
-        <ol class="tl-result">${sorted.map((ev, i) => `<li class="${order[i] === ev.id ? "ok" : "no"}"><b>${fmtYear(ev.y)}</b> ${esc(ev.t)}</li>`).join("")}</ol></div>`,
-      after: () => { const qb = $("#quiz-body"); qb.scrollTop = qb.scrollHeight; },
-    });
-  });
-  $("#undo").addEventListener("click", () => { if (!finished) { order.pop(); draw(); } });
 }
 
 /* ---------- Die Akte (früher „Wer war das?“) ---------- */
@@ -1338,93 +1176,6 @@ function shortestPath(a, b) {
   const path = [];
   for (let c = b; c != null; c = prev[c]) path.unshift(c);
   return path;
-}
-
-/* ---------- Zeitgenossen-Duell ---------- */
-const DUEL_BORN_GAP = 25, DUEL_ODD_GAP = 40;
-function pickDuels(n = 10) {
-  const P = CONTENT.people, out = [];
-  for (let guard = 0; out.length < n && guard < 600; guard++) {
-    if (Math.random() < 0.5) {
-      const [a, b] = shuffle(P).slice(0, 2);
-      if (Math.abs(a.b - b.b) < DUEL_BORN_GAP) continue;
-      out.push({ type: "born", people: [a, b], answer: (a.b < b.b ? a : b).id });
-    } else {
-      const y = P[Math.floor(Math.random() * P.length)].b + 20;
-      const alive = shuffle(P.filter((p) => p.b <= y && y <= p.d));
-      if (alive.length < 3) continue;
-      const three = alive.slice(0, 3);
-      const lo = Math.min(...three.map((p) => p.b)), hi = Math.max(...three.map((p) => p.d));
-      const far = P.filter((p) => p.d < lo - DUEL_ODD_GAP || p.b > hi + DUEL_ODD_GAP);
-      if (!far.length) continue;
-      const odd = far[Math.floor(Math.random() * far.length)];
-      out.push({ type: "odd", people: shuffle([...three, odd]), answer: odd.id });
-    }
-  }
-  return out;
-}
-
-// Lebenszeiten als Balken auf gemeinsamer Zeitachse
-function rangeChart(list, markId) {
-  const lo = Math.min(...list.map((p) => p.b)) - 10, hi = Math.max(...list.map((p) => p.d)) + 10, span = hi - lo;
-  return `<div class="range">${list.slice().sort((a, b) => a.b - b.b).map((p) => `
-    <div class="r-row${p.id === markId ? " mark" : ""}">
-      <span class="r-name">${esc(p.name)}</span>
-      <div class="r-track"><i style="left:${((p.b - lo) / span) * 100}%;width:${Math.max(1.5, ((p.d - p.b) / span) * 100)}%"></i></div>
-      <span class="r-years">${lifeSpan(p)}</span>
-    </div>`).join("")}</div>`;
-}
-
-function renderDuel(q) {
-  const born = q.type === "born";
-  $("#quiz-body").innerHTML = `
-    <div class="prompt short"><p class="prompt-label">${born ? "Wer wurde früher geboren?" : "Drei von ihnen lebten zur selben Zeit. Wer passt nicht dazu?"}</p></div>
-    <div class="duel${born ? " two" : ""}">
-      ${q.people.map((p) => `<button class="duel-card" data-id="${p.id}" type="button">${avatar(p, "sq")}<span class="t-name">${esc(p.name)}</span></button>`).join("")}
-    </div>${FEEDBACK}`;
-  $("#quiz-body").querySelectorAll(".duel-card").forEach((btn) => btn.addEventListener("click", () => {
-    const correct = btn.dataset.id === q.answer;
-    const ans = PEOPLE[q.answer];
-    $("#quiz-body").querySelectorAll(".duel-card").forEach((b) => {
-      b.disabled = true;
-      if (b.dataset.id === q.answer) b.classList.add("correct");
-    });
-    if (!correct) btn.classList.add("wrong");
-    const text = born
-      ? `<strong>${esc(ans.name)}</strong> wurde früher geboren.`
-      : `<strong>${esc(ans.name)}</strong> lebte zu einer ganz anderen Zeit als die drei anderen.`;
-    settle({
-      correct, auto: false,
-      show: { icon: born ? "↔" : "≠", title: q.people.map((p) => p.name).join(", "), sub: born ? `Früher geboren: ${ans.name}` : `Passt nicht dazu: ${ans.name}` },
-      feedback: `<div class="fb-text"><p>${text}</p>${rangeChart(q.people, q.answer)}</div>`,
-    });
-  }, { once: true }));
-}
-
-/* ---------- Zitat-Rätsel ---------- */
-function renderQuote(item) {
-  const p = PEOPLE[item.p];
-  const opts = whoOptions(p, "topic");
-  $("#quiz-body").innerHTML = `
-    <div class="prompt"><p class="prompt-label">Von wem stammt dieses Zitat?</p>
-      <blockquote class="quote">„${esc(item.q)}“</blockquote></div>
-    <div class="answers">${opts.map((o) => `<button class="answer" data-id="${o.id}">${esc(o.name)}</button>`).join("")}</div>
-    ${FEEDBACK}`;
-  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
-    const correct = btn.dataset.id === p.id;
-    $("#quiz-body").querySelectorAll(".answer").forEach((b) => { b.disabled = true; if (b.dataset.id === p.id) b.classList.add("correct"); });
-    if (!correct) btn.classList.add("wrong");
-    saveRec("quote", item.id, correct);
-    discover(p.id);
-    settle({
-      correct, auto: false,
-      show: { icon: initials(p.name), title: `„${item.q}“`, sub: p.name },
-      feedback: `<div class="fb-text"><p><strong>${esc(p.name)}</strong><br><span class="muted">${esc(item.s)}</span></p>
-        ${item.t ? '<p class="muted small">Überliefert: Der genaue Wortlaut ist nicht gesichert.</p>' : ""}</div>
-        <button class="btn ghost" id="open-profile" type="button">Profil</button>`,
-      after: () => $("#open-profile").addEventListener("click", () => openProfile(p.id)),
-    });
-  }, { once: true }));
 }
 
 /* ---------- Verbindungen: Weg von Person A zu Person B ---------- */
@@ -1678,578 +1429,6 @@ function renderResult() {
   $("#again")?.addEventListener("click", () => startQuiz(mode));
 }
 
-/* =================================================================
-   CHEMIELABOR (Daten: chemie.json)
-   Alle Aufgaben sind Auswahlfragen: o[0] ist die richtige Antwort, die Reihenfolge wird beim Anzeigen gemischt.
-   ================================================================= */
-/*CHEM-PURE-START*/
-const SUBD = "₀₁₂₃₄₅₆₇₈₉", SUPD = "⁰¹²³⁴⁵⁶⁷⁸⁹";
-const sub = (s) => String(s).replace(/\d/g, (d) => SUBD[d]);
-const supCharge = (z, plus) => (z > 1 ? String(z).replace(/\d/g, (d) => SUPD[d]) : "") + (plus ? "⁺" : "⁻");
-const gcd = (a, b) => (b ? gcd(b, a % b) : a);
-const pickN = (arr, n) => shuffle(arr).slice(0, n);
-
-// Formel eines Salzes: Klammern nur bei Mehratom-Ionen mit Index
-const saltPart = (form, n, poly) => (n === 1 ? sub(form) : (poly ? `(${sub(form)})` : sub(form)) + sub(n));
-const saltFormula = (c, a, nC, nA) => saltPart(c.form, nC, c.poly) + saltPart(a.form, nA, a.poly);
-const ionLabel = (x, plus) => sub(x.form) + supCharge(x.z, plus);
-const saltName = (c, a) => { const an = a.name.toLowerCase(); return c.name.includes("(") ? `${c.name}-${an}` : c.name + an; };
-const saltAllowed = (c, a) => (!a.only || a.only.includes(c.id)) && !(a.deny || []).includes(c.id);
-
-function buildSaltPool(D) {
-  const pool = [];
-  for (const c of D.cations) for (const a of D.anions) {
-    if (!saltAllowed(c, a)) continue;
-    const g = gcd(c.z, a.z), nC = a.z / g, nA = c.z / g;
-    pool.push({
-      id: `${c.id}|${a.id}`, c, a, nC, nA,
-      formula: saltFormula(c, a, nC, nA), name: saltName(c, a),
-    });
-  }
-  pool.forEach((it) => {
-    it.build = () => (Math.random() < 0.5 ? saltToFormula(it) : saltToName(it, pool));
-  });
-  return pool;
-}
-function saltToFormula(it) {
-  const { c, a, nC, nA, formula } = it;
-  const cand = [[nA, nC], [1, 1], [nC * 2, nA * 2], [nC, 1], [1, nA], [nC + 1, nA], [nC, nA + 1]]
-    .map(([x, y]) => saltFormula(c, a, x, y));
-  const wrong = [...new Set(cand.filter((f) => f !== formula))];
-  return {
-    label: "Welche Formel hat das Salz?", q: `${ionLabel(c, true)}  +  ${ionLabel(a, false)}`,
-    t: `${ionLabel(c, true)} + ${ionLabel(a, false)}`, o: [formula, ...pickN(wrong, 3)],
-    e: `${ionLabel(c, true)} und ${ionLabel(a, false)} müssen sich in der Ladung ausgleichen: ${nC} × ${c.z}+ = ${nA} × ${a.z}−. Das Salz heißt ${it.name}.`,
-  };
-}
-function saltToName(it, pool) {
-  const near = pool.filter((p) => p !== it && p.name !== it.name && (p.c === it.c || p.a === it.a));
-  const names = [...new Set(near.map((p) => p.name))];
-  return {
-    label: "Wie heißt das Salz?", q: it.formula, t: it.formula, o: [it.name, ...pickN(names, 3)],
-    e: `${it.formula} besteht aus ${ionLabel(it.c, true)} und ${ionLabel(it.a, false)}.`,
-  };
-}
-
-// Säuren, Basen, Abkürzungen, konjugierte Paare
-function buildSbPool(D) {
-  const pool = [];
-  const groups = {
-    saeure: "Säure", base: "Base", trivial: "Trivialname",
-  };
-  for (const s of D.stoffe) {
-    const same = D.stoffe.filter((x) => x.g === s.g && x.f !== s.f && x.n !== s.n);
-    const sameDistinct = (key) => [...new Set(same.map((x) => x[key]))];
-    pool.push({
-      id: `n:${s.id}`,
-      build: () => ({
-        label: groups[s.g] === "Trivialname" ? "Trivialname: welche Formel?" : "Welche Formel?", q: s.n, t: s.n,
-        o: [s.f, ...pickN(sameDistinct("f"), 3)], e: `${s.n} hat die Formel ${s.f}.`,
-      }),
-    });
-    pool.push({
-      id: `f:${s.id}`,
-      build: () => ({
-        label: groups[s.g] === "Trivialname" ? "Trivialname: welcher Stoff?" : "Wie heißt der Stoff?", q: s.f, t: s.f,
-        o: [s.n, ...pickN(sameDistinct("n"), 3)], e: `${s.f} ist ${s.n}.`,
-      }),
-    });
-  }
-  for (const x of D.abk) {
-    pool.push({
-      id: x.id,
-      build: () => ({
-        label: "Was bedeutet die Abkürzung?", q: x.ab, t: x.ab,
-        o: [x.m, ...pickN(D.abk.filter((y) => y.m !== x.m).map((y) => y.m), 3)], e: `${x.ab} steht für ${x.m}.`,
-      }),
-    });
-  }
-  const all = [...new Set(D.pairs.flat())];
-  D.pairs.forEach(([acid, base], i) => {
-    pool.push({
-      id: `ks:${i}`,
-      build: () => ({
-        label: "Konjugiertes Paar", q: `Was ist die konjugierte Base von ${acid}?`, t: `Konjugierte Base von ${acid}`,
-        o: [base, ...pickN(all.filter((x) => x !== base && x !== acid), 3)],
-        e: `${acid} gibt ein Proton ab und wird zu ${base}.`,
-      }),
-    });
-    pool.push({
-      id: `ka:${i}`,
-      build: () => ({
-        label: "Konjugiertes Paar", q: `Was ist die konjugierte Säure von ${base}?`, t: `Konjugierte Säure von ${base}`,
-        o: [acid, ...pickN(all.filter((x) => x !== acid && x !== base), 3)],
-        e: `${base} nimmt ein Proton auf und wird zu ${acid}.`,
-      }),
-    });
-  });
-  for (const x of D.sb) pool.push(x);
-  return pool;
-}
-
-// Titrationskurve: Säure (pKs oder null = stark) mit starker Base, x = n(Base) / n(Säure), c = 0,1 mol/L
-function titrationPH(pks, x, c = 0.1) {
-  const Ka = pks == null ? 1e8 : Math.pow(10, -pks), Kw = 1e-14;
-  const cNa = (c * x) / (1 + x), cA = c / (1 + x);
-  const f = (lh) => { const h = Math.pow(10, lh); return cNa + h - (cA * Ka) / (Ka + h) - Kw / h; };
-  let lo = -14, hi = 1;
-  for (let i = 0; i < 80; i++) { const mid = (lo + hi) / 2; if (f(mid) > 0) hi = mid; else lo = mid; }
-  return -(lo + hi) / 2;
-}
-
-function titrationSvg(pks) {
-  const W = 320, H = 210, L = 34, R = 10, T = 10, B = 40;
-  const X = (x) => L + (x / 2) * (W - L - R), Y = (ph) => T + (1 - ph / 14) * (H - T - B);
-  const xs = [];
-  for (let x = 0; x < 0.9; x += 0.02) xs.push(x);
-  for (let x = 0.9; x < 1.1; x += 0.002) xs.push(x);
-  for (let x = 1.1; x <= 2.0001; x += 0.02) xs.push(x);
-  const path = xs.map((x, i) => `${i ? "L" : "M"}${X(x).toFixed(1)} ${Y(titrationPH(pks, x)).toFixed(1)}`).join("");
-  let grid = "";
-  for (let ph = 0; ph <= 14; ph += 2) {
-    grid += `<line x1="${L}" x2="${W - R}" y1="${Y(ph)}" y2="${Y(ph)}" stroke="var(--line)" stroke-width="1"/>` +
-      `<text x="${L - 6}" y="${Y(ph) + 3.5}" text-anchor="end" font-size="10" fill="var(--muted)">${ph}</text>`;
-  }
-  for (const x of [0, 0.5, 1, 1.5, 2]) {
-    grid += `<line x1="${X(x)}" x2="${X(x)}" y1="${T}" y2="${H - B}" stroke="var(--line)" stroke-width="1"/>` +
-      `<text x="${X(x)}" y="${H - B + 14}" text-anchor="middle" font-size="10" fill="var(--muted)">${x}</text>`;
-  }
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Titrationskurve: pH gegen zugegebene Basenmenge">
-    ${grid}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linejoin="round"/>
-    <text x="${(L + W - R) / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--muted)">x = n(Base) / n(Säure)</text>
-    <text x="${L + 6}" y="${T + 12}" font-size="10" fill="var(--muted)">pH</text></svg>`;
-}
-
-// IR-Spektrum aus Banden [Wellenzahl, Breite, Tiefe]
-const IR_ALKYL = [[2930, 40, 0.55], [2860, 20, 0.4], [1460, 25, 0.35], [1375, 10, 0.25]];
-function irSvg(item) {
-  const bands = [...(item.base ? IR_ALKYL : []), ...item.bands];
-  const W = 320, H = 190, L = 12, R = 10, T = 10, B = 36;
-  const X = (wn) => L + ((4000 - wn) / 3500) * (W - L - R), Y = (t) => T + (1 - t) * (H - T - B);
-  const pts = [];
-  for (let wn = 4000; wn >= 500; wn -= 5) {
-    let t = 0.97;
-    for (const [c, w, d] of bands) t *= 1 - d * Math.exp(-Math.pow((wn - c) / w, 2));
-    pts.push(`${pts.length ? "L" : "M"}${X(wn).toFixed(1)} ${Y(Math.max(0.03, t)).toFixed(1)}`);
-  }
-  let grid = "";
-  for (const wn of [4000, 3000, 2000, 1500, 1000, 500]) {
-    grid += `<line x1="${X(wn)}" x2="${X(wn)}" y1="${T}" y2="${H - B}" stroke="var(--line)" stroke-width="1"/>` +
-      `<text x="${X(wn)}" y="${H - B + 14}" text-anchor="${wn === 4000 ? "start" : wn === 500 ? "end" : "middle"}" font-size="10" fill="var(--muted)">${wn}</text>`;
-  }
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="IR-Spektrum">
-    ${grid}<line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" stroke="var(--muted)" stroke-width="1"/>
-    <path d="${pts.join("")}" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>
-    <text x="${(L + W - R) / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--muted)">Wellenzahl in cm⁻¹ (Durchlässigkeit nach oben)</text></svg>`;
-}
-
-// ¹H-NMR-Strichspektrum aus Signalen [δ, Muster, Zahl der H]
-const NMR_PAT = { s: [1], d: [1, 1], t: [1, 2, 1], q: [1, 3, 3, 1], sept: [1, 6, 15, 20, 15, 6, 1], m: [2, 3, 4, 3, 2] };
-function nmrSvg(signals) {
-  const W = 320, H = 170, L = 12, R = 12, T = 22, B = 34;
-  const X = (ppm) => L + ((12 - ppm) / 12) * (W - L - R), base = H - B;
-  const J = 0.1;
-  let raw = 0;
-  const sigs = signals.map(([d, m, h]) => {
-    const p = NMR_PAT[m], sum = p.reduce((a, b) => a + b, 0);
-    const lines = p.map((v, i) => ({ x: d + (i - (p.length - 1) / 2) * J, a: (h * v) / sum }));
-    raw = Math.max(raw, ...lines.map((l) => l.a));
-    return { d, h, lines };
-  });
-  const k = (base - T - 14) / raw;
-  let g = "", txt = "";
-  for (const s of sigs) {
-    let top = base;
-    for (const l of s.lines) {
-      const y = base - Math.max(2, l.a * k);
-      top = Math.min(top, y);
-      g += `<line x1="${X(l.x).toFixed(1)}" x2="${X(l.x).toFixed(1)}" y1="${base}" y2="${y.toFixed(1)}" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round"/>`;
-    }
-    txt += `<text x="${X(s.d).toFixed(1)}" y="${(top - 5).toFixed(1)}" text-anchor="middle" font-size="10" fill="var(--ink)">${s.h} H</text>`;
-  }
-  let grid = "";
-  for (const ppm of [12, 10, 8, 6, 4, 2, 0]) {
-    grid += `<line x1="${X(ppm)}" x2="${X(ppm)}" y1="${base}" y2="${base + 4}" stroke="var(--muted)"/>` +
-      `<text x="${X(ppm)}" y="${base + 16}" text-anchor="middle" font-size="10" fill="var(--muted)">${ppm}</text>`;
-  }
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="¹H-NMR-Spektrum">
-    <line x1="${L}" x2="${W - R}" y1="${base}" y2="${base}" stroke="var(--muted)" stroke-width="1"/>${g}${txt}${grid}
-    <text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--muted)">δ in ppm (Zahl über dem Signal: relative H-Zahl)</text></svg>`;
-}
-
-function buildChem(D) {
-  const irPool = D.ir.map((x) => ({
-    id: x.id,
-    build: () => ({ label: "IR-Spektrum", fig: irSvg(x), q: "Welche funktionelle Gruppe oder Verbindungsklasse passt zum Spektrum?", t: "IR-Spektrum deuten", o: x.o, e: x.e }),
-  }));
-  const nmrPool = D.nmr.map((x) => ({
-    id: x.id,
-    build: () => ({
-      label: "¹H-NMR-Spektrum", fig: nmrSvg(x.s), q: "Welche Verbindung gehört zu diesem Spektrum?", t: "¹H-NMR-Spektrum deuten",
-      o: [x.name, ...pickN(D.nmr.filter((y) => y.name !== x.name).map((y) => y.name), 3)], e: x.e,
-    }),
-  }));
-  const titr = D.titration.map((x) => ({
-    id: x.id,
-    build: () => ({ label: x.label, fig: titrationSvg(x.pks), q: x.q, t: `Titrationskurve: ${x.q}`, o: x.o, e: x.e }),
-  }));
-  return {
-    salt: buildSaltPool(D),
-    redox: D.redox,
-    sb: buildSbPool(D),
-    titr,
-    analytik: [...D.analytik, ...irPool, ...nmrPool],
-  };
-}
-/*CHEM-PURE-END*/
-
-function renderChem(item) {
-  const q = item.build ? item.build() : item;
-  const opts = shuffle(q.o.map((t, i) => ({ t, ok: i === 0 })));
-  $("#quiz-body").innerHTML = `
-    <div class="prompt chem-prompt">
-      ${q.label ? `<p class="prompt-label">${esc(q.label)}</p>` : ""}
-      ${q.fig ? `<div class="chem-fig">${q.fig}</div>` : ""}
-      ${q.ctx ? `<p class="chem-ctx">${esc(q.ctx)}</p>` : ""}
-      <h2 class="prompt-statement chem-q">${esc(q.q)}</h2>
-    </div>
-    <div class="answers">${opts.map((o, i) => `<button class="answer chem-a" data-i="${i}">${esc(o.t)}</button>`).join("")}</div>
-    ${FEEDBACK}`;
-  $("#quiz-body").querySelectorAll(".answer").forEach((btn) => btn.addEventListener("click", () => {
-    const correct = opts[Number(btn.dataset.i)].ok;
-    $("#quiz-body").querySelectorAll(".answer").forEach((b, i) => { b.disabled = true; if (opts[i].ok) b.classList.add("correct"); });
-    if (!correct) btn.classList.add("wrong");
-    saveRec(quiz.mode.id, item.id, correct);
-    settle({
-      correct, auto: false,
-      show: { icon: quiz.mode.iconText ? quiz.mode.icon : "⚗️", title: q.t || q.q, sub: `Richtig: ${q.o[0]}` },
-      feedback: `<div class="fb-text"><p><strong>${esc(q.o[0])}</strong><br><span class="muted">${esc(q.e || "")}</span></p></div>`,
-    });
-  }, { once: true }));
-}
-
-/* =================================================================
-   KREUZWORT: Wörter aus Personen und Ländern, das Gitter baut die App selbst
-   Antworten: Großbuchstaben A bis Z, Ä = AE, Ö = OE, Ü = UE, ß = SS, 4 bis 12 Buchstaben.
-   ================================================================= */
-/*CROSS-PURE-START*/
-const cwFlat = (s) => String(s).replace(/[ÄÖÜäöüß]/g, "a").normalize("NFD").replace(/\p{M}+/gu, "");
-const cwWordOK = (raw) => /^[A-Za-z]+$/.test(cwFlat(raw));
-function cwNorm(s) {
-  return String(s).toUpperCase().replace(/Ä/g, "AE").replace(/Ö/g, "OE").replace(/Ü/g, "UE")
-    .normalize("NFD").replace(/\p{M}+/gu, "").replace(/[^A-Z]/g, "");
-}
-
-// Aus dem vollen Namen ein Rätselwort machen: Nachname, bei Beinamen („der Große“) der Vorname
-const CW_NAME_OVERRIDE = { "Leonardo da Vinci": "Leonardo" };
-function cwPersonAnswer(name) {
-  if (CW_NAME_OVERRIDE[name]) return CW_NAME_OVERRIDE[name];
-  const t = name.split(/\s+/).filter((w) => !/^(?:[IVX]+\.|Jr\.?)$/.test(w));
-  const i = t.findIndex((w) => /^(?:der|die|das)$/i.test(w));
-  const raw = i > 0 ? t[i - 1] : t[t.length - 1];
-  return raw.split(/[’']/).pop();
-}
-
-function buildCwWords(people, countryList) {
-  const out = [];
-  const add = (w) => {
-    w.len = w.answer.length;
-    if (w.len < 4 || w.len > 12) return;
-    if (w.clues.some((c) => cwNorm(c).includes(w.answer))) return; // Antwort steht schon in der Frage
-    out.push(w);
-  };
-  for (const p of people) {
-    const raw = cwPersonAnswer(p.name);
-    if (!cwWordOK(raw) || !p.hints?.length) continue;
-    add({ id: `p:${p.id}`, src: "p", answer: cwNorm(raw), label: p.name, clues: p.hints.slice() });
-  }
-  for (const c of countryList) {
-    if (c.capital && cwWordOK(c.capital)) {
-      add({ id: `cap:${c.id}`, src: "l", answer: cwNorm(c.capital), label: c.capital, clues: [`Hauptstadt von ${c.name}`, `Region: ${c.region}`] });
-    }
-    if (c.name && c.capital && cwWordOK(c.name)) {
-      add({ id: `land:${c.id}`, src: "l", answer: cwNorm(c.name), label: c.name, clues: [`Land mit der Hauptstadt ${c.capital}`, `Flagge: ${c.flag}`, `Region: ${c.region}`] });
-    }
-  }
-  return out;
-}
-
-const cwHash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
-function cwMulberry(seed) {
-  return () => {
-    seed = (seed + 0x6D2B79F5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function cwShuffle(arr, rng) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
-  return a;
-}
-
-// Gitter bauen: Wörter werden an gemeinsamen Buchstaben angelegt, viele Versuche, das beste Ergebnis gewinnt
-function buildCrossword(words, rng = Math.random, { tries = 120, maxWords = 10, maxDim = 12, minWords = 5 } = {}) {
-  const seen = new Set(), pool = [];
-  for (const w of words) if (!seen.has(w.answer)) { seen.add(w.answer); pool.push(w); }
-  if (pool.length < minWords) return null;
-  const key = (x, y) => `${x},${y}`;
-  const longest = pool.slice().sort((a, b) => b.answer.length - a.answer.length).slice(0, 3);
-
-  // Prüft eine Lage. Ergebnis: Zahl der Kreuzungen oder -1, wenn die Lage verboten ist.
-  const check = (cells, ans, x, y, dir) => {
-    const dx = dir === "a" ? 1 : 0, dy = dir === "d" ? 1 : 0, n = ans.length;
-    if (cells.has(key(x - dx, y - dy)) || cells.has(key(x + dx * n, y + dy * n))) return -1;
-    let cross = 0;
-    for (let i = 0; i < n; i++) {
-      const cx = x + dx * i, cy = y + dy * i, c = cells.get(key(cx, cy));
-      if (c) {
-        if (c.ch !== ans[i] || c[dir] != null) return -1;
-        cross++;
-      } else if (cells.has(key(cx + dy, cy + dx)) || cells.has(key(cx - dy, cy - dx))) return -1; // würde neben einem Wort kleben
-    }
-    return cross;
-  };
-
-  let best = null;
-  for (let t = 0; t < tries; t++) {
-    const first = longest[Math.floor(rng() * longest.length)];
-    const rest = cwShuffle(pool.filter((w) => w !== first), rng);
-    const cells = new Map(), placed = [];
-    let b = { x0: 0, y0: 0, x1: 0, y1: 0 }, crossings = 0;
-    const put = (w, x, y, dir) => {
-      const dx = dir === "a" ? 1 : 0, dy = dir === "d" ? 1 : 0;
-      const idx = placed.length;
-      placed.push({ w, x, y, dir });
-      for (let i = 0; i < w.answer.length; i++) {
-        const k = key(x + dx * i, y + dy * i), c = cells.get(k) || { ch: w.answer[i] };
-        c[dir] = idx;
-        cells.set(k, c);
-      }
-      const x1 = x + dx * (w.answer.length - 1), y1 = y + dy * (w.answer.length - 1);
-      b = { x0: Math.min(b.x0, x), y0: Math.min(b.y0, y), x1: Math.max(b.x1, x1), y1: Math.max(b.y1, y1) };
-    };
-    put(first, 0, 0, "a");
-    for (const w of rest) {
-      if (placed.length >= maxWords) break;
-      let pick = null, pickScore = -Infinity;
-      const tried = new Set();
-      for (let i = 0; i < w.answer.length; i++) {
-        for (const [k, c] of cells) {
-          if (c.ch !== w.answer[i] || (c.a != null) === (c.d != null)) continue; // nur Zellen mit genau einem Wort
-          const [cx, cy] = k.split(",").map(Number);
-          const dir = c.a != null ? "d" : "a";
-          const x = cx - (dir === "a" ? i : 0), y = cy - (dir === "d" ? i : 0);
-          const tk = `${x},${y},${dir}`;
-          if (tried.has(tk)) continue;
-          tried.add(tk);
-          const cr = check(cells, w.answer, x, y, dir);
-          if (cr < 1) continue;
-          const x1 = x + (dir === "a" ? w.answer.length - 1 : 0), y1 = y + (dir === "d" ? w.answer.length - 1 : 0);
-          const nw = Math.max(b.x1, x1) - Math.min(b.x0, x) + 1, nh = Math.max(b.y1, y1) - Math.min(b.y0, y) + 1;
-          if (nw > maxDim || nh > maxDim) continue;
-          const sc = cr * 10 - nw * nh * 0.15 - Math.abs(nw - nh) * 0.5 + rng() * 2;
-          if (sc > pickScore) { pickScore = sc; pick = { x, y, dir, cr }; }
-        }
-      }
-      if (pick) { put(w, pick.x, pick.y, pick.dir); crossings += pick.cr; }
-    }
-    const area = (b.x1 - b.x0 + 1) * (b.y1 - b.y0 + 1);
-    const score = placed.length * 1000 + crossings * 20 - area;
-    if (!best || score > best.score) best = { score, placed, cells, b };
-  }
-  if (!best || best.placed.length < minWords) return null;
-
-  // Koordinaten auf 0 schieben, Nummern vergeben (von links oben nach rechts unten)
-  const { x0, y0, x1, y1 } = best.b;
-  const entries = best.placed.map((p) => {
-    const x = p.x - x0, y = p.y - y0, dx = p.dir === "a" ? 1 : 0, dy = p.dir === "d" ? 1 : 0;
-    return { w: p.w, x, y, dir: p.dir, cells: p.w.answer.split("").map((_, i) => key(x + dx * i, y + dy * i)) };
-  });
-  const starts = [...new Set(entries.map((e) => `${e.y},${e.x}`))]
-    .map((s) => s.split(",").map(Number)).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const num = new Map(starts.map(([y, x], i) => [key(x, y), i + 1]));
-  entries.forEach((e) => { e.num = num.get(key(e.x, e.y)); });
-  entries.sort((a, b) => a.num - b.num || (a.dir === "a" ? -1 : 1));
-  const sol = {};
-  for (const e of entries) e.cells.forEach((k, i) => { sol[k] = e.w.answer[i]; });
-  return { w: x1 - x0 + 1, h: y1 - y0 + 1, entries, sol, nums: Object.fromEntries(num) };
-}
-/*CROSS-PURE-END*/
-
-let CW = null;
-function cwPool(src) {
-  CW ??= buildCwWords(CONTENT?.people || [], countries || []);
-  return src === "mix" ? CW : CW.filter((w) => w.src === src);
-}
-function cwMake(src, daily) {
-  const pool = cwPool(src);
-  let cand, rng;
-  if (daily) {
-    const day = dayKey();
-    rng = cwMulberry(cwHash("cw-bau-" + day));
-    cand = cwShuffle(pool, cwMulberry(cwHash("cw-wahl-" + day))).slice(0, 18);
-  } else {
-    rng = Math.random;
-    cand = pickFrom("cross", pool, 18);
-  }
-  const pz = buildCrossword(cand, rng);
-  return pz ? [pz] : [];
-}
-
-function renderCross(pz) {
-  const E = pz.entries, N = E.length;
-  quiz.questions = E; quiz.results = []; quiz.i = 0; quiz.points = 0;
-
-  const at = {}; // Zelle -> { a: Wort-Nr., d: Wort-Nr. }
-  E.forEach((e, i) => e.cells.forEach((k) => { (at[k] ??= {})[e.dir] = i; }));
-  const st = { vals: {}, locked: new Set(), wrong: new Set(), help: E.map(() => 0), hints: E.map(() => 0), done: new Set(), sel: E[0].cells[0], dir: E[0].dir, finished: false };
-
-  let grid = "";
-  for (let y = 0; y < pz.h; y++) for (let x = 0; x < pz.w; x++) {
-    const k = `${x},${y}`;
-    grid += pz.sol[k]
-      ? `<button type="button" class="cw-cell" data-k="${k}">${pz.nums[k] ? `<i class="cw-n">${pz.nums[k]}</i>` : ""}<b class="cw-l"></b></button>`
-      : `<span class="cw-blank"></span>`;
-  }
-  const keys = (row) => row.split("").map((c) => `<button type="button" class="cw-key" data-ch="${c}">${c}</button>`).join("");
-  $("#quiz-body").innerHTML = `
-    <div class="cw-top">
-      <p class="prompt-label" id="cw-label"></p>
-      <p class="cw-clue" id="cw-clue"></p>
-      <ul class="cw-extra" id="cw-extra"></ul>
-    </div>
-    <div class="cw-gridwrap"><div class="cw-grid" id="cw-grid" style="--cols:${pz.w}">${grid}</div></div>
-    <p class="cw-note">Umlaute als AE, OE, UE, ß als SS. Antippen wählt ein Wort, nochmal Antippen wechselt die Richtung.</p>
-    <details class="cw-list"><summary>Alle Fragen</summary><div id="cw-all"></div></details>
-    <div class="feedback" id="feedback"></div>
-    <div class="cw-kb">
-      <div class="cw-tools">
-        <button type="button" class="cw-tool" id="cw-hint"></button>
-        <button type="button" class="cw-tool" id="cw-reveal">Buchstabe</button>
-        <button type="button" class="cw-tool" id="cw-check">Prüfen</button>
-      </div>
-      <div class="cw-row">${keys("QWERTZUIOP")}</div>
-      <div class="cw-row">${keys("ASDFGHJKL")}</div>
-      <div class="cw-row">${keys("YXCVBNM")}<button type="button" class="cw-key wide" id="cw-back" aria-label="Löschen">⌫</button></div>
-    </div>`;
-
-  const cellEls = [...$("#cw-grid").querySelectorAll(".cw-cell")];
-  const dirName = (d) => (d === "a" ? "waagerecht" : "senkrecht");
-  const activeIdx = () => {
-    const c = at[st.sel];
-    if (c[st.dir] != null) return c[st.dir];
-    st.dir = st.dir === "a" ? "d" : "a";
-    return c[st.dir];
-  };
-
-  function paint() {
-    const act = activeIdx(), e = E[act];
-    const inWord = new Set(e.cells);
-    cellEls.forEach((el) => {
-      const k = el.dataset.k;
-      el.querySelector(".cw-l").textContent = st.vals[k] || "";
-      el.className = "cw-cell" + (inWord.has(k) ? " in" : "") + (k === st.sel ? " sel" : "") + (st.locked.has(k) ? " ok" : "") + (st.wrong.has(k) ? " bad" : "");
-    });
-    $("#cw-label").textContent = `${e.num} ${dirName(e.dir)} · ${e.w.answer.length} Buchstaben${st.done.has(act) ? " · gelöst" : ""}`;
-    $("#cw-clue").textContent = e.w.clues[0];
-    $("#cw-extra").innerHTML = e.w.clues.slice(1, 1 + st.hints[act]).map((c) => `<li>${esc(c)}</li>`).join("");
-    const left = e.w.clues.length - 1 - st.hints[act];
-    const hb = $("#cw-hint");
-    hb.textContent = left > 0 ? "Hinweis" : "Kein Hinweis mehr";
-    hb.disabled = left <= 0 || st.done.has(act) || st.finished;
-    $("#cw-all").innerHTML = E.map((x, i) =>
-      `<button type="button" class="cw-li${st.done.has(i) ? " done" : ""}${i === act ? " now" : ""}" data-e="${i}"><b>${x.num}${x.dir === "a" ? "→" : "↓"}</b> ${esc(x.w.clues[0])}</button>`).join("");
-    quiz.i = act;
-    renderDots();
-    $("#quiz-count").textContent = `${st.done.size}/${N}`;
-  }
-
-  function finishWord(i) {
-    const w = E[i].w, helped = st.help[i];
-    st.done.add(i);
-    E[i].cells.forEach((k) => st.locked.add(k));
-    const pts = Math.max(0, 3 - helped);
-    quiz.results[i] = { correct: helped === 0, pts, show: { icon: "✏️", title: w.label, sub: w.clues[0] } };
-    quiz.points += pts;
-    saveRec("cross", w.id, helped === 0);
-  }
-  function checkDone(k) {
-    for (const d of ["a", "d"]) {
-      const i = at[k]?.[d];
-      if (i != null && !st.done.has(i) && E[i].cells.every((c) => st.vals[c] === pz.sol[c])) finishWord(i);
-    }
-    if (st.done.size === N && !st.finished) {
-      st.finished = true;
-      $("#feedback").innerHTML = `<button class="btn wide" id="cw-end">Ergebnis ansehen</button>`;
-      $("#cw-end").addEventListener("click", renderResult);
-    }
-  }
-  function gotoUnsolved(from) {
-    for (let s = 1; s <= N; s++) {
-      const j = (from + s) % N;
-      if (st.done.has(j)) continue;
-      st.dir = E[j].dir;
-      st.sel = E[j].cells.find((c) => !st.locked.has(c) && !st.vals[c]) || E[j].cells.find((c) => !st.locked.has(c)) || E[j].cells[0];
-      return;
-    }
-  }
-  function advance(act) {
-    if (st.done.has(act)) { gotoUnsolved(act); return; }
-    const cs = E[act].cells;
-    for (let i = cs.indexOf(st.sel) + 1; i < cs.length; i++) if (!st.locked.has(cs[i])) { st.sel = cs[i]; return; }
-  }
-
-  $("#cw-grid").addEventListener("click", (ev) => {
-    const el = ev.target.closest(".cw-cell");
-    if (!el || st.finished) return;
-    const k = el.dataset.k, c = at[k];
-    if (k === st.sel && c.a != null && c.d != null) st.dir = st.dir === "a" ? "d" : "a";
-    else { st.sel = k; if (c[st.dir] == null) st.dir = st.dir === "a" ? "d" : "a"; }
-    paint();
-  });
-  $("#cw-all").addEventListener("click", (ev) => {
-    const b = ev.target.closest(".cw-li");
-    if (!b || st.finished) return;
-    const e = E[Number(b.dataset.e)];
-    st.dir = e.dir;
-    st.sel = e.cells.find((c) => !st.locked.has(c)) || e.cells[0];
-    paint();
-  });
-  $(".cw-kb").addEventListener("click", (ev) => {
-    const b = ev.target.closest("button");
-    if (!b || st.finished) return;
-    const act = activeIdx();
-    if (b.dataset.ch) {
-      if (!st.locked.has(st.sel)) { st.vals[st.sel] = b.dataset.ch; st.wrong.delete(st.sel); checkDone(st.sel); }
-      advance(act);
-    } else if (b.id === "cw-back") {
-      const cs = E[act].cells;
-      if (!st.locked.has(st.sel) && st.vals[st.sel]) { delete st.vals[st.sel]; st.wrong.delete(st.sel); }
-      else {
-        let i = cs.indexOf(st.sel) - 1;
-        while (i >= 0 && st.locked.has(cs[i])) i--;
-        if (i >= 0) { st.sel = cs[i]; delete st.vals[cs[i]]; st.wrong.delete(cs[i]); }
-      }
-    } else if (b.id === "cw-hint") {
-      if (st.hints[act] < E[act].w.clues.length - 1 && !st.done.has(act)) { st.hints[act]++; st.help[act]++; }
-    } else if (b.id === "cw-reveal") {
-      const k = st.sel;
-      if (!st.locked.has(k) && st.vals[k] !== pz.sol[k]) {
-        st.vals[k] = pz.sol[k]; st.wrong.delete(k);
-        for (const d of ["a", "d"]) { const i = at[k][d]; if (i != null && !st.done.has(i)) st.help[i]++; }
-        checkDone(k);
-        advance(act);
-      }
-    } else if (b.id === "cw-check") {
-      for (const [k, v] of Object.entries(st.vals)) if (!st.locked.has(k) && v !== pz.sol[k]) st.wrong.add(k);
-    }
-    paint();
-  });
-  paint();
-}
-
 /* ---------- Zurück wischen: vom linken Rand nach rechts ---------- */
 const TAB_ORDER = ["news", "lesen", "learn"];
 function goBack() {
@@ -2317,7 +1496,6 @@ async function init() {
     CONTENT.cards.forEach((c) => { CARD[c.id] = c; });
     buildGraph();
   } catch { CONTENT = null; }
-  try { CHEM = buildChem(await get("chemie.json")); } catch { CHEM = null; }
   try {
     PORTRAITS = (await get("portraits/portraits.json")).items || {};
   } catch { PORTRAITS = {}; }
