@@ -738,6 +738,8 @@ function renderLearn() {
     know.innerHTML = `<div class="empty"><strong>Inhalte fehlen</strong>Die Datei content.json konnte nicht geladen werden.</div>`;
   }
 
+  renderVocabRows();
+
   // Welt-Quiz
   $("#regions").innerHTML = REGIONS.map((r) =>
     `<button role="radio" aria-checked="${r === region}" data-region="${r}">${r}</button>`).join("");
@@ -769,6 +771,8 @@ $("#view-learn").addEventListener("click", (e) => {
   else if (b.dataset.open === "deck") startDeck();
   else if (b.dataset.open === "atlas") openSheet(atlasView);
   else if (b.dataset.open === "zitate") openSheet(zitateView);
+  else if (b.dataset.open === "vocab") startQuiz(VOCAB);
+  else if (b.dataset.open === "wsammlung") { wQuery = ""; openSheet(wortView); }
   else if (b.dataset.open === "impuls") { showTab("lesen"); scroller.scrollTo(0, 0); }
 });
 
@@ -827,7 +831,7 @@ function renderDots() {
 
 const RENDER = {
   country: (t) => renderCountry(t), map: (t) => renderMap(t), tf: (t) => renderTF(t), 
-  deck: (t) => renderDeck(t), face: (t) => renderFace(t), links: (t) => renderLinks(t), 
+  deck: (t) => renderDeck(t), face: (t) => renderFace(t), links: (t) => renderLinks(t), vocab: (t) => renderVocab(t), 
   who: (t) => (t.mode === "learn" ? renderLearnCard(t) : renderAkte(t)),
 };
 function renderQuestion() {
@@ -1549,8 +1553,9 @@ function renderResult() {
   const msg =
     mode.noAgain ? (mode.noAgainMsg || "Für heute reicht es. Morgen warten 10 neue Karten, falsche Antworten kommen dazwischen wieder.") :
     mode.sr
-      ? (score === total ? "Fehlerfrei. Die Fragen kommen erst in ein paar Tagen wieder."
+      ? (score === total ? `Fehlerfrei. Die ${mode.kind === "vocab" ? "Wörter" : "Fragen"} kommen erst in ein paar Tagen wieder.`
         : score >= total * 0.7 ? "Gute Runde. Die Fehler kommen in der nächsten Runde wieder dran."
+        : mode.kind === "vocab" ? "Die Wörter, die du nicht wusstest, kommen gleich in der nächsten Runde wieder. So bleiben sie hängen."
         : "Die falschen Antworten kommen gleich in der nächsten Runde wieder. So bleibt es hängen.")
       : (score === total ? "Fehlerfrei. Noch eine Runde?" : score >= total * 0.7 ? "Gute Runde." : "Noch Luft nach oben. Ein neuer Durchgang bringt neue Aufgaben.");
 
@@ -1573,6 +1578,451 @@ function renderResult() {
     </div>`;
   $("#done").addEventListener("click", closeQuiz);
   $("#again")?.addEventListener("click", () => startQuiz(mode));
+}
+
+/* =================================================================
+   WORTSCHATZ: Wörter sammeln, nachschlagen, wiederholen
+   Startsammlung in woerter.json (ohne Bedeutung). Eigene Wörter und alle Bedeutungen
+   liegen im localStorage ("db:wortschatz"), der Lernstand im Lernkasten ("progress.vocab").
+   ================================================================= */
+let WORTER = { themes: {}, words: [] };
+const VOCAB_N = 5;
+const VOCAB = { id: "vocab", kind: "vocab", title: "Wortschatz", sr: true, short: "Wortschatz",
+  pick: () => pickFrom("vocab", vocabReady(), VOCAB_N) };
+
+const wst = () => { const s = store.get("wortschatz", {}); return { own: s.own || [], m: s.m || {} }; };
+const wstSave = (s) => store.set("wortschatz", s);
+// Startwörter + eigene Wörter, jeweils mit den gespeicherten Angaben (m Bedeutung, b Beispiel, c Fundort, q Quelle, ok bestätigt)
+function wAll() {
+  const s = wst();
+  return [
+    ...WORTER.words.map((w) => ({ ...w, ...(s.m[w.id] || {}) })),
+    ...s.own.map((w) => ({ ...w, ...(s.m[w.id] || {}), own: true })),
+  ];
+}
+const vocabReady = () => wAll().filter((x) => x.m && x.m.trim());
+const wById = (id) => wAll().find((x) => x.id === id);
+const wLabel = (x) => (x.a ? x.a + " " : "") + x.w;
+const wSnip = (s, n = 120) => (s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
+const wSure = (x) => (rec("vocab", x.id)?.box ?? 0) >= MASTERED;
+const wArt = (x) => (x.a ? `<span class="w-art">${esc(x.a)}</span> ` : "");
+const canSpeak = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+function speak(t) {
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = "de-DE"; u.rate = 0.9;
+    speechSynthesis.speak(u);
+  } catch { /* kein Ton */ }
+}
+
+/* ---------- Nachschlagen: Wiktionary (Wörterbuch) und Wikipedia (Lexikon) ---------- */
+function wikiClean(s) {
+  return s
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<ref[^>]*\/>/gi, "").replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, "")
+    .replace(/\{\{K\|([^{}]*)\}\}/g, (m, a) => { const p = a.split("|").filter((x) => x && !/=/.test(x)); return p.length ? `(${p.join(", ")})` : ""; })
+    .replace(/\{\{Ü\|[^|{}]*\|([^|{}]*)[^{}]*\}\}/g, "$1")
+    .replace(/\{\{[^{}]*\}\}/g, "")
+    .replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1")
+    .replace(/'{2,}/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ").trim();
+}
+// Wikitext einer Wiktionary-Seite: Abschnitt „Deutsch“, je Wortart die Bedeutungen und Beispiele
+function parseWikt(text) {
+  const lines = String(text).split("\n");
+  const start = lines.findIndex((l) => /^==[^=].*\{\{Sprache\|Deutsch\}\}.*==\s*$/.test(l));
+  if (start < 0) return [];
+  let end = lines.findIndex((l, i) => i > start && /^==[^=]/.test(l));
+  if (end < 0) end = lines.length;
+  const entries = [];
+  let cur = null, mode = "";
+  for (const l of lines.slice(start + 1, end)) {
+    const h = l.match(/^===([^=].*?)===\s*$/);
+    if (h) {
+      const wa = h[1].match(/\{\{Wortart\|([^|}]+)\|[^}]*\}\}/);
+      if (wa) {
+        const art = [...h[1].matchAll(/\{\{([mfn])\}\}/g)].map((g) => ({ m: "der", f: "die", n: "das" })[g[1]]);
+        cur = { pos: wa[1].trim(), art, defs: [], ex: {} };
+        entries.push(cur);
+      } else cur = null;
+      mode = "";
+      continue;
+    }
+    if (!cur) continue;
+    if (/^====/.test(l)) { mode = ""; continue; }
+    const t = l.match(/^\{\{([^|}]+)\}\}\s*$/);
+    if (t) { mode = t[1] === "Bedeutungen" ? "b" : t[1] === "Beispiele" ? "e" : ""; continue; }
+    const n = l.match(/^:\[([^\]]+)\]\s*(.*)$/);
+    if (!n || !mode) continue;
+    const txt = wikiClean(n[2]);
+    if (!txt) continue;
+    if (mode === "b") cur.defs.push({ n: n[1], text: txt, ex: "" });
+    else if (!cur.ex[n[1]]) cur.ex[n[1]] = txt;
+  }
+  entries.forEach((e) => e.defs.forEach((d) => { d.ex = e.ex[d.n] || ""; }));
+  return entries.filter((e) => e.defs.length);
+}
+function wShort(t) {
+  const s = String(t).replace(/\s+/g, " ").trim();
+  const parts = s.match(/[^.!?]+[.!?]+(\s|$)/g) || [s];
+  let out = "";
+  for (const p of parts) { if (out && (out + p).length > 380) break; out += p; if (out.length > 160) break; }
+  return (out || s).trim().slice(0, 420);
+}
+const wFetch = (u) => fetch(u, { signal: window.AbortSignal?.timeout ? AbortSignal.timeout(9000) : undefined }).then((r) => r.json());
+async function wortLookup(word) {
+  const base = word.trim();
+  const variants = [...new Set([base, base.charAt(0).toUpperCase() + base.slice(1), base.charAt(0).toLowerCase() + base.slice(1)])];
+  const res = { wikt: null, wp: null, net: false };
+  const viaWikt = async () => {
+    for (const v of variants) {
+      try {
+        const j = await wFetch(`https://de.wiktionary.org/w/api.php?action=parse&page=${encodeURIComponent(v)}&prop=wikitext&redirects=1&format=json&formatversion=2&origin=*`);
+        res.net = true;
+        const entries = j?.parse?.wikitext ? parseWikt(j.parse.wikitext) : [];
+        if (entries.length) { res.wikt = { title: j.parse.title, entries, url: `https://de.wiktionary.org/wiki/${encodeURIComponent(j.parse.title)}` }; return; }
+      } catch { /* offline oder gesperrt */ }
+    }
+  };
+  const viaWp = async () => {
+    for (const v of variants) {
+      try {
+        const j = await wFetch(`https://de.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(v)}?redirect=true`);
+        res.net = true;
+        if (j?.extract && j.type !== "disambiguation") {
+          res.wp = { title: j.title || v, text: wShort(j.extract), url: j.content_urls?.desktop?.page || `https://de.wikipedia.org/wiki/${encodeURIComponent(v)}` };
+          return;
+        }
+      } catch { /* offline oder gesperrt */ }
+    }
+  };
+  await Promise.all([viaWikt(), viaWp()]);
+  return res;
+}
+
+/* ---------- Lernen-Übersicht: zwei Zeilen ---------- */
+function renderVocabRows() {
+  const box = $("#vocab-rows");
+  if (!box) return;
+  const all = wAll();
+  const ready = all.filter((x) => x.m);
+  const now = Date.now();
+  const due = ready.filter((x) => { const r = rec("vocab", x.id); return r && r.box < 5 && r.due <= now; }).length;
+  const fresh = ready.filter((x) => !rec("vocab", x.id)).length;
+  const sure = ready.filter(wSure).length;
+  const open = all.length - ready.length;
+  const practice = ready.length
+    ? row({ attr: 'data-open="vocab"', icon: "🔤", title: "Wortschatz üben",
+        sub: `${sure} von ${ready.length} sicher${due ? `, ${due} zum Wiederholen` : fresh ? `, ${fresh} neu` : ""}`, pct: Math.round((sure / ready.length) * 100) })
+    : row({ attr: 'data-open="wsammlung"', icon: "🔤", title: "Wortschatz üben", sub: "Trag zuerst Bedeutungen ein, dann kannst du üben." });
+  box.innerHTML = practice + row({ attr: 'data-open="wsammlung"', icon: "📚", title: "Meine Wörter", sub: `${all.length} Wörter${open ? `, ${open} ohne Bedeutung` : ""}` });
+}
+
+/* ---------- Übungsrunde: Karte aufdecken, selbst bewerten ---------- */
+function renderVocab(x) {
+  $("#quiz-body").innerHTML = `
+    <div class="prompt w-prompt">
+      <p class="prompt-label">${x.c ? `Gefunden in: ${esc(x.c)}` : "Was bedeutet das Wort?"}</p>
+      <h2 class="w-word">${wArt(x)}${esc(x.w)}</h2>
+      ${canSpeak ? `<button class="w-speak" type="button" id="w-speak">🔊 Vorlesen</button>` : ""}
+      <div class="w-reveal" id="w-reveal" hidden>
+        <p class="w-m">${esc(x.m)}</p>
+        ${x.b ? `<p class="w-b">${esc(x.b)}</p>` : ""}
+      </div>
+    </div>
+    ${FEEDBACK}
+    <div class="card-actions" id="w-actions"><button class="btn wide" id="w-show" type="button">Bedeutung aufdecken</button></div>`;
+  $("#w-speak")?.addEventListener("click", () => speak(x.w));
+  $("#w-show").addEventListener("click", () => {
+    $("#w-reveal").hidden = false;
+    $("#w-actions").innerHTML = `<div class="w-rate"><button class="btn ghost" id="w-no" type="button">Nicht gewusst</button><button class="btn" id="w-yes" type="button">Gewusst</button></div>`;
+    const rate = (ok) => {
+      $("#w-actions").innerHTML = "";
+      saveRec("vocab", x.id, ok);
+      settle({ correct: ok, show: { icon: "✗", title: wLabel(x), sub: wSnip(x.m) }, auto: true, delay: 220 });
+    };
+    $("#w-no").addEventListener("click", () => rate(false), { once: true });
+    $("#w-yes").addEventListener("click", () => rate(true), { once: true });
+  });
+}
+
+/* ---------- Sammlung (Overlay) ---------- */
+let wFilter = "alle", wQuery = "";
+function wFiltered() {
+  const q = wQuery.trim().toLowerCase();
+  return wAll().filter((x) =>
+    (wFilter === "alle" || (wFilter === "offen" && !x.m) || (wFilter === "eigen" && x.own) || (wFilter === "sicher" && x.m && wSure(x)) || x.t === wFilter) &&
+    (!q || `${x.w} ${x.m || ""} ${x.c || ""}`.toLowerCase().includes(q)))
+    .sort((a, b) => a.w.localeCompare(b.w, "de"));
+}
+function wRow(x) {
+  return `<button class="w-row" data-w="${esc(x.id)}" type="button">
+    <span class="w-row-text"><span class="w-row-w">${wArt(x)}${esc(x.w)}</span>
+    <span class="w-row-m${x.m ? "" : " open"}">${x.m ? esc(x.m) : "Bedeutung fehlt"}</span></span>
+    ${x.m && wSure(x) ? '<span class="w-tick" aria-label="sicher">✓</span>' : ""}</button>`;
+}
+function wRenderList() {
+  const box = $("#w-all");
+  if (!box) return;
+  const list = wFiltered();
+  box.innerHTML = list.length ? list.map(wRow).join("") : `<div class="empty"><strong>Nichts gefunden</strong>Anderer Filter oder anderer Suchbegriff.</div>`;
+}
+function closeSheets() {
+  sheetStack.length = 0;
+  $("#sheet").hidden = true;
+  document.body.style.overflow = $("#quiz").hidden ? "" : "hidden";
+}
+const wBackup = () => JSON.stringify({ app: "daily-brain-wortschatz", v: 1, wortschatz: wst(), progress: progress.vocab || {} });
+function wRestore(txt) {
+  let d;
+  try { d = JSON.parse(txt); } catch { return "Das ist kein gültiger Sicherungstext."; }
+  if (d?.app !== "daily-brain-wortschatz" || !d.wortschatz) return "Das ist keine Sicherung aus dieser App.";
+  const s = wst();
+  let n = 0;
+  for (const o of d.wortschatz.own || []) {
+    if (o && o.id && o.w && !s.own.some((x) => x.id === String(o.id))) { s.own.push({ id: String(o.id), w: String(o.w), a: ["der", "die", "das"].includes(o.a) ? o.a : "", t: "eigen", d: Number(o.d) || Date.now() }); n++; }
+  }
+  for (const [id, v] of Object.entries(d.wortschatz.m || {})) {
+    if (!v || typeof v !== "object" || (s.m[id] && (v.at || 0) < (s.m[id].at || 0))) continue;
+    const e = { m: String(v.m || ""), b: String(v.b || ""), c: String(v.c || ""), q: String(v.q || ""), ok: !!v.ok, at: Number(v.at) || Date.now() };
+    if (["der", "die", "das"].includes(v.a)) e.a = v.a;
+    s.m[id] = e;
+  }
+  wstSave(s);
+  progress.vocab ??= {};
+  for (const [id, r] of Object.entries(d.progress || {})) {
+    if (r && typeof r.box === "number" && (!progress.vocab[id] || (r.seen || 0) > (progress.vocab[id].seen || 0))) progress.vocab[id] = { box: r.box, due: Number(r.due) || 0, seen: Number(r.seen) || 0, wrong: Number(r.wrong) || 0 };
+  }
+  store.set("progress", progress);
+  return `Wiederhergestellt. ${n ? `${n} eigene Wörter neu dazugekommen.` : "Bedeutungen und Lernstand sind aktualisiert."}`;
+}
+
+function wortView() {
+  $("#sheet-title").textContent = "Wortschatz";
+  const all = wAll();
+  const ready = all.filter((x) => x.m);
+  const sure = ready.filter(wSure).length;
+  const chips = [["alle", "Alle"], ["offen", "Ohne Bedeutung"], ["eigen", "Eigene"], ["sicher", "Sicher"], ...Object.entries(WORTER.themes)];
+  $("#sheet-body").innerHTML = `
+    <p class="page-sub">${all.length} Wörter, ${ready.length} mit Bedeutung, ${sure} sicher.</p>
+    <div class="w-actions">
+      <button class="btn wide" type="button" data-w-add>Wort hinzufügen</button>
+      ${ready.length ? `<button class="btn ghost wide" type="button" data-w-practice>Jetzt 5 Wörter üben</button>` : ""}
+    </div>
+    <div class="chips z-chips" role="radiogroup" aria-label="Filter">${chips.map(([k, l]) => `<button role="radio" aria-checked="${k === wFilter}" data-wf="${k}">${esc(l)}</button>`).join("")}</div>
+    <label class="search z-search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      <input id="w-q" type="search" placeholder="Wort oder Bedeutung suchen" autocomplete="off" value="${esc(wQuery)}">
+    </label>
+    <div class="z-list" id="w-all"></div>
+    <h3 class="z-h">Sicherung</h3>
+    <p class="page-sub">Deine Wörter und dein Lernstand liegen nur auf diesem iPhone. Kopier sie ab und zu als Text und leg sie zum Beispiel in Notizen ab.</p>
+    <div class="w-actions">
+      <button class="btn ghost wide" type="button" data-w-copy>Alles kopieren</button>
+      <button class="btn ghost wide" type="button" data-w-restore>Aus Text wiederherstellen</button>
+    </div>
+    <div id="w-backup"></div>`;
+  wRenderList();
+  const body = $("#sheet-body");
+  body.querySelectorAll("[data-wf]").forEach((b) => b.addEventListener("click", () => {
+    wFilter = b.dataset.wf;
+    body.querySelectorAll("[data-wf]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+    wRenderList();
+  }));
+  $("#w-q").addEventListener("input", (e) => { wQuery = e.target.value; wRenderList(); });
+  $("#w-all").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-w]");
+    if (b) openSheet(() => wortDetail(b.dataset.w));
+  });
+  body.querySelector("[data-w-add]").addEventListener("click", () => openSheet(() => wortEdit(null)));
+  body.querySelector("[data-w-practice]")?.addEventListener("click", () => { closeSheets(); startQuiz(VOCAB); });
+  const info = $("#w-backup");
+  body.querySelector("[data-w-copy]").addEventListener("click", async () => {
+    const txt = wBackup();
+    try {
+      await navigator.clipboard.writeText(txt);
+      info.innerHTML = `<p class="wd-src">Kopiert. Füg den Text jetzt irgendwo ein, wo du ihn aufbewahrst.</p>`;
+    } catch {
+      info.innerHTML = `<p class="wd-src">Das Kopieren wurde blockiert. Halte den Text gedrückt, wähle „Alles auswählen“ und dann „Kopieren“.</p><textarea class="w-text" id="w-copy-area" readonly rows="5"></textarea>`;
+      const ta = $("#w-copy-area"); ta.value = txt; ta.focus(); ta.select();
+    }
+  });
+  body.querySelector("[data-w-restore]").addEventListener("click", () => {
+    info.innerHTML = `<textarea class="w-text" id="w-restore-area" rows="5" placeholder="Sicherungstext hier einfügen"></textarea><div class="w-actions"><button class="btn wide" type="button" id="w-restore-go">Wiederherstellen</button></div><p class="wd-src" id="w-restore-msg" aria-live="polite"></p>`;
+    $("#w-restore-go").addEventListener("click", () => {
+      const msg = wRestore($("#w-restore-area").value.trim());
+      $("#w-restore-msg").textContent = msg;
+      wRenderList();
+      if (msg.startsWith("Wiederhergestellt")) $("#sheet-body").querySelector(".page-sub").textContent = `${wAll().length} Wörter, ${wAll().filter((x) => x.m).length} mit Bedeutung.`;
+    });
+  });
+}
+
+function wortDetail(id) {
+  const x = wById(id);
+  if (!x) { sheetBack(); return; }
+  $("#sheet-title").textContent = "Wort";
+  const r = rec("vocab", id);
+  const when = r ? (r.due <= Date.now() ? "heute fällig" : `wieder am ${new Date(r.due).toLocaleDateString("de-DE")}`) : "";
+  const q = encodeURIComponent(x.w);
+  $("#sheet-body").innerHTML = `
+    <article class="wd">
+      ${x.t && WORTER.themes[x.t] ? `<span class="z-badge">${esc(WORTER.themes[x.t])}</span>` : ""}
+      <h2 class="wd-word">${wArt(x)}${esc(x.w)}</h2>
+      ${x.c ? `<p class="wd-src">Gefunden in: ${esc(x.c)}</p>` : ""}
+      ${canSpeak ? `<button class="w-speak" type="button" data-speak>🔊 Vorlesen</button>` : ""}
+      ${x.m
+        ? `<h3>Bedeutung</h3><p class="wd-m">${esc(x.m)}</p>
+           ${x.b ? `<h3>Beispiel</h3><p class="wd-m">${esc(x.b)}</p>` : ""}
+           <p class="wd-src">${x.ok ? `<span class="z-badge ok">Bestätigt</span> Quelle: ${esc(x.q || "")}` : `<span class="z-badge mid">Selbst eingetragen</span>`}</p>
+           ${r ? `<p class="wd-src">Lernkasten ${r.box} von 5${when ? `, ${when}` : ""}. ${r.seen}-mal geübt.</p>` : ""}`
+        : `<div class="empty"><strong>Noch keine Bedeutung</strong>Schlag das Wort nach und trag die Bedeutung ein. Erst dann kommt es in die Übungsrunde.</div>`}
+      <div class="w-actions"><button class="btn wide" type="button" data-w-edit>${x.m ? "Bearbeiten" : "Bedeutung eintragen"}</button></div>
+      <h3>Selbst nachschlagen</h3>
+      <div class="wd-links">
+        <a href="https://de.wiktionary.org/wiki/${q}" target="_blank" rel="noopener">Wiktionary</a>
+        <a href="https://www.dwds.de/wb/${q}" target="_blank" rel="noopener">DWDS</a>
+        <a href="https://www.duden.de/suchen/dudenonline/${q}" target="_blank" rel="noopener">Duden</a>
+      </div>
+      ${x.own || x.m ? `<button class="w-del" type="button" data-w-del>${x.own ? "Wort löschen" : "Bedeutung zurücksetzen"}</button>` : ""}
+    </article>`;
+  const body = $("#sheet-body");
+  body.querySelector("[data-speak]")?.addEventListener("click", () => speak(x.w));
+  body.querySelector("[data-w-edit]").addEventListener("click", () => openSheet(() => wortEdit(id)));
+  const del = body.querySelector("[data-w-del]");
+  let armed = false;
+  del?.addEventListener("click", () => {
+    if (!armed) { armed = true; del.textContent = "Sicher? Nochmal tippen zum Bestätigen"; return; }
+    const s = wst();
+    s.own = s.own.filter((o) => o.id !== id);
+    delete s.m[id];
+    wstSave(s);
+    if (progress.vocab) { delete progress.vocab[id]; store.set("progress", progress); }
+    sheetBack();
+  });
+}
+
+let wApplied = null;   // zuletzt aus dem Internet übernommener Text: { q: Quelle, text }
+function wSaveWord(id, f) {
+  const s = wst();
+  const word = f.w.trim();
+  let wid = id;
+  if (!wid) {
+    const dup = wAll().find((x) => x.w.toLowerCase() === word.toLowerCase());
+    if (dup) return { dup };
+    wid = "o" + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+    s.own.push({ id: wid, w: word, a: f.a, t: "eigen", d: Date.now() });
+  }
+  const own = s.own.find((o) => o.id === wid);
+  if (own) { own.w = word; own.a = f.a; }
+  const prev = s.m[wid] || {};
+  let q = "", ok = false;
+  if (f.m) {
+    if (wApplied && wApplied.text === f.m) { q = wApplied.q; ok = true; }
+    else if (f.m === (prev.m || "")) { q = prev.q || "eigen"; ok = !!prev.ok; }
+    else q = "eigen";
+  }
+  const entry = { m: f.m, b: f.b, c: f.c, q, ok, at: Date.now() };
+  const base = WORTER.words.find((w) => w.id === wid);
+  if (base) entry.a = f.a;
+  if (!entry.m && !entry.b && !entry.c && (!base || entry.a === (base.a || ""))) delete s.m[wid];
+  else s.m[wid] = entry;
+  wstSave(s);
+  return { id: wid };
+}
+
+function wortEdit(id, note = "") {
+  const x = id ? wById(id) : null;
+  if (id && !x) { sheetBack(); return; }
+  wApplied = null;
+  let art = x?.a || "";
+  const fixed = !!(x && !x.own);   // Startwörter behalten ihre Schreibweise
+  $("#sheet-title").textContent = x ? "Wort bearbeiten" : "Neues Wort";
+  $("#sheet-body").innerHTML = `
+    <div class="w-form">
+      <label class="w-lab" for="wf-w">Wort</label>
+      <input class="w-input" id="wf-w" type="text" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(x?.w || "")}" ${fixed ? "readonly" : ""} placeholder="z. B. Neuroplastizität">
+      <span class="w-lab">Artikel</span>
+      <div class="chips w-art-chips" role="radiogroup" aria-label="Artikel">${[["", "keiner"], ["der", "der"], ["die", "die"], ["das", "das"]].map(([k, l]) => `<button type="button" role="radio" aria-checked="${art === k}" data-art="${k}">${l}</button>`).join("")}</div>
+      <label class="w-lab" for="wf-c">Gefunden in (optional)</label>
+      <input class="w-input" id="wf-c" type="text" autocomplete="off" value="${esc(x?.c || "")}" placeholder="z. B. Buchtitel">
+      <button class="btn ghost wide w-look" type="button" id="wf-look">Online nachschlagen</button>
+      <div id="w-res" aria-live="polite"></div>
+      <label class="w-lab" for="wf-m">Bedeutung</label>
+      <textarea class="w-text" id="wf-m" rows="4" placeholder="Bedeutung hier einfügen oder selbst schreiben">${esc(x?.m || "")}</textarea>
+      <button class="w-link" type="button" id="wf-paste">Aus Zwischenablage einfügen</button>
+      <label class="w-lab" for="wf-b">Beispielsatz (optional)</label>
+      <textarea class="w-text" id="wf-b" rows="2">${esc(x?.b || "")}</textarea>
+      <p class="wd-src" id="wf-msg" aria-live="polite">${esc(note)}</p>
+      <div class="w-actions"><button class="btn wide" id="wf-save" type="button">Speichern</button></div>
+    </div>`;
+  const body = $("#sheet-body");
+  const msg = (t) => { const m = $("#wf-msg"); if (m) m.textContent = t; };
+  const setArt = (a) => { art = a; body.querySelectorAll("[data-art]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.art === art))); };
+  body.querySelectorAll("[data-art]").forEach((b) => b.addEventListener("click", () => setArt(b.dataset.art)));
+  $("#wf-paste").addEventListener("click", async () => {
+    try {
+      const t = (await navigator.clipboard.readText()).trim();
+      if (t) { $("#wf-m").value = t; msg(""); } else msg("Die Zwischenablage ist leer.");
+    } catch { msg("Einfügen ist blockiert. Halte das Textfeld gedrückt und wähle „Einfügen“."); }
+  });
+
+  let token = 0;
+  $("#wf-look").addEventListener("click", async () => {
+    const w = $("#wf-w").value.trim();
+    if (!w) { msg("Trag erst das Wort ein."); return; }
+    const my = ++token;
+    $("#w-res").innerHTML = `<p class="wd-src">Suche bei Wiktionary und Wikipedia …</p>`;
+    const res = await wortLookup(w);
+    if (my !== token || !$("#w-res")) return;
+    const cands = [];
+    let html = "";
+    if (res.wikt) {
+      html += `<h4 class="w-src-h">Wiktionary · <a href="${esc(res.wikt.url)}" target="_blank" rel="noopener">Seite öffnen</a></h4>`;
+      for (const e of res.wikt.entries) {
+        html += `<p class="w-pos">${esc(e.pos)}${e.art.length ? `, ${esc(e.art.join(" / "))}` : ""}</p>`;
+        for (const d of e.defs) {
+          cands.push({ src: "Wiktionary", text: d.text, ex: d.ex, art: e.art.length === 1 ? e.art[0] : "" });
+          html += `<button class="w-cand" type="button" aria-pressed="false" data-ci="${cands.length - 1}"><b>[${esc(d.n)}]</b> ${esc(d.text)}</button>`;
+        }
+      }
+    }
+    if (res.wp) {
+      cands.push({ src: "Wikipedia", text: res.wp.text, ex: "", art: "" });
+      html += `<h4 class="w-src-h">Wikipedia (Lexikon) · <a href="${esc(res.wp.url)}" target="_blank" rel="noopener">${esc(res.wp.title)}</a></h4>
+        <button class="w-cand" type="button" aria-pressed="false" data-ci="${cands.length - 1}">${esc(res.wp.text)}</button>`;
+    }
+    if (!cands.length) {
+      $("#w-res").innerHTML = `<div class="empty"><strong>${res.net ? "Nichts gefunden" : "Keine Verbindung"}</strong>${res.net ? "Prüf die Schreibweise oder schlag das Wort selbst nach (Link unter „Wort“ nach dem Speichern) und füge die Bedeutung ein." : "Du bist offline oder die Dienste sind gerade nicht erreichbar. Trag die Bedeutung selbst ein."}</div>`;
+      return;
+    }
+    $("#w-res").innerHTML = `<div class="w-res">${html}<p class="wd-src">Tippe auf die passende Bedeutung (mehrere gehen) und dann auf „Auswahl übernehmen“.</p><button class="btn small" type="button" id="w-apply">Auswahl übernehmen</button></div>`;
+    $("#w-res").querySelectorAll(".w-cand").forEach((b) => b.addEventListener("click", () => b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"))));
+    $("#w-apply").addEventListener("click", () => {
+      const sel = [...$("#w-res").querySelectorAll('.w-cand[aria-pressed="true"]')].map((b) => cands[Number(b.dataset.ci)]);
+      if (!sel.length) { msg("Wähl erst eine Bedeutung aus."); return; }
+      const text = sel.length === 1 ? sel[0].text : sel.map((c, i) => `${i + 1}) ${c.text}`).join("\n");
+      $("#wf-m").value = text;
+      const ex = sel.find((c) => c.ex)?.ex;
+      if (ex && !$("#wf-b").value.trim()) $("#wf-b").value = ex;
+      if (!art && sel[0].art) setArt(sel[0].art);
+      wApplied = { q: [...new Set(sel.map((c) => c.src))].join(", "), text };
+      msg("Übernommen. Lies den Text kurz durch und tippe dann auf „Speichern“.");
+    });
+  });
+
+  $("#wf-save").addEventListener("click", () => {
+    const f = { w: $("#wf-w").value, a: art, c: $("#wf-c").value.trim(), m: $("#wf-m").value.trim(), b: $("#wf-b").value.trim() };
+    if (!f.w.trim()) { msg("Trag ein Wort ein."); return; }
+    const out = wSaveWord(id, f);
+    if (out.dup) { msg(`„${out.dup.w}“ steht schon in deiner Sammlung. Öffne es in der Liste, um die Bedeutung zu ändern.`); return; }
+    if (id) { sheetBack(); return; }
+    wortEdit(null, `Gespeichert: ${wLabel({ a: f.a, w: f.w.trim() })}${f.m ? "" : " (noch ohne Bedeutung)"}. Du kannst gleich das nächste Wort eintragen.`);
+    $("#wf-w").focus();
+  });
 }
 
 /* ---------- Zurück wischen: vom linken Rand nach rechts ---------- */
@@ -1643,6 +2093,7 @@ async function init() {
     buildGraph();
   } catch { CONTENT = null; }
   try { ZITATE = (await get("zitate.json")).quotes || []; } catch { ZITATE = []; }
+  try { WORTER = await get("woerter.json"); WORTER.words ??= []; WORTER.themes ??= {}; } catch { WORTER = { themes: {}, words: [] }; }
   try {
     PORTRAITS = (await get("portraits/portraits.json")).items || {};
   } catch { PORTRAITS = {}; }
