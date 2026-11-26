@@ -1337,6 +1337,8 @@ const ZVOTE = [["ja", "Ja"], ["teils", "Teilweise"], ["nein", "Nein"]];
 let zFilter = "alle", zQuery = "";
 const zSt = () => { const s = store.get("zitate", {}); return { read: s.read || [], vote: s.vote || {}, day: s.day || "", today: s.today || [] }; };
 const zById = (id) => ZITATE.find((z) => z.id === id);
+const zQ = (z) => (z.l === "en" ? `“${esc(z.q)}”` : `„${esc(z.q)}“`);
+const zLang = (z) => (z.l ? ` lang="${z.l}"` : "");
 function zWho(z) {
   const p = z.p && PEOPLE[z.p];
   return p ? { name: p.name, role: p.role, years: lifeSpan(p), p } : { name: z.w, role: z.r, years: z.y, p: null };
@@ -1372,7 +1374,7 @@ function zRow(z, read) {
   const flag = z.e === "z" || z.e === "u" ? `<span class="z-badge ${ZE[z.e][1]}">${ZE[z.e][0]}</span>` : "";
   return `<button class="z-row${read.has(z.id) ? " read" : ""}" data-z="${z.id}" type="button">
     ${zAvatar(z)}
-    <span class="z-row-text"><span class="z-row-q">„${esc(z.q)}“</span>
+    <span class="z-row-text"><span class="z-row-q"${zLang(z)}>${zQ(z)}</span>
     <span class="z-row-who">${read.has(z.id) ? "✓ " : ""}${esc(w.name)}${flag ? " · " : ""}${flag}</span></span></button>`;
 }
 function zFiltered() {
@@ -1433,7 +1435,7 @@ function zitatDetail(id, order, reveal = false) {
   $("#sheet-body").innerHTML = `
     <article class="zd">
       <span class="z-badge ${ZE[z.e][1]}">${ZE[z.e][0]}</span>
-      <blockquote class="quote zd-q">„${esc(z.q)}“</blockquote>
+      <blockquote class="quote zd-q"${zLang(z)}>${zQ(z)}</blockquote>
       <div class="zd-who">${zAvatar(z)}<span><strong>${esc(w.name)}</strong><span class="muted">${esc(w.role || "")}${w.years ? `, ${esc(w.years)}` : ""}</span></span></div>
       <p class="zd-src">${esc(z.s)}</p>
       <h3>Kontext</h3><p>${esc(z.k)}</p>
