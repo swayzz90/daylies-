@@ -684,3 +684,8 @@ a.btn { text-decoration: none; display: inline-block; text-align: center; }
 .w-m { margin: 0; font-size: 1.05rem; line-height: 1.55; white-space: pre-line; }
 .w-b { margin: 12px 0 0; color: var(--muted); font-size: 0.92rem; line-height: 1.5; font-style: italic; }
 .w-rate { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* Wortschatz: nichts rutscht seitlich */
+.quiz--vocab .quiz-modes { display: none; }
+.quiz--vocab, .quiz--vocab .quiz-body { overflow-x: hidden; overscroll-behavior: none; touch-action: pan-y; }
+.sheet:has(.wd, #w-all, .w-input) .sheet-body { overflow-x: hidden; overscroll-behavior: none; touch-action: pan-y; }

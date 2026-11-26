@@ -792,6 +792,7 @@ function startQuiz(game) {
   quiz = { mode: game, questions, i: 0, results: [], points: 0 };
   if (game.kind === "who") preloadPhotos(questions.map((q) => q.p));
   else if (game.kind === "face") preloadPhotos(questions);
+  $("#quiz").classList.toggle("quiz--vocab", game.kind === "vocab");
   showQuiz();
   renderModeSwitcher();
   renderQuestion();
@@ -1596,7 +1597,7 @@ const wstSave = (s) => store.set("wortschatz", s);
 function wAll() {
   const s = wst();
   return [
-    ...WORTER.words.map((w) => ({ ...w, ...(s.m[w.id] || {}) })),
+    ...WORTER.words.map((w) => { const sv = s.m[w.id]; return { ...w, ...(sv || {}), ...(sv && typeof sv.m === "string" ? { v: 0 } : {}) }; }),
     ...s.own.map((w) => ({ ...w, ...(s.m[w.id] || {}), own: true })),
   ];
 }
@@ -1877,7 +1878,7 @@ function wortDetail(id) {
       ${x.m
         ? `<h3>Bedeutung</h3><p class="wd-m">${esc(x.m)}</p>
            ${x.b ? `<h3>Beispiel</h3><p class="wd-m">${esc(x.b)}</p>` : ""}
-           <p class="wd-src">${x.ok ? `<span class="z-badge ok">Bestätigt</span> Quelle: ${esc(x.q || "")}` : `<span class="z-badge mid">Selbst eingetragen</span>`}</p>
+           <p class="wd-src">${x.ok ? `<span class="z-badge ok">Bestätigt</span> Quelle: ${esc(x.q || "")}` : x.v ? `<span class="z-badge mid">Vorschlag</span> Von Claude geschrieben, noch nicht gegengeprüft. Prüf ihn mit Duden oder DWDS und ändere ihn, wenn er nicht passt.` : `<span class="z-badge mid">Selbst eingetragen</span>`}</p>
            ${r ? `<p class="wd-src">Lernkasten ${r.box} von 5${when ? `, ${when}` : ""}. ${r.seen}-mal geübt.</p>` : ""}`
         : `<div class="empty"><strong>Noch keine Bedeutung</strong>Schlag das Wort nach und trag die Bedeutung ein. Erst dann kommt es in die Übungsrunde.</div>`}
       <div class="w-actions"><button class="btn wide" type="button" data-w-edit>${x.m ? "Bearbeiten" : "Bedeutung eintragen"}</button></div>
@@ -1887,7 +1888,7 @@ function wortDetail(id) {
         <a href="https://www.dwds.de/wb/${q}" target="_blank" rel="noopener">DWDS</a>
         <a href="https://www.duden.de/suchen/dudenonline/${q}" target="_blank" rel="noopener">Duden</a>
       </div>
-      ${x.own || x.m ? `<button class="w-del" type="button" data-w-del>${x.own ? "Wort löschen" : "Bedeutung zurücksetzen"}</button>` : ""}
+      ${x.own || wst().m[id] ? `<button class="w-del" type="button" data-w-del>${x.own ? "Wort löschen" : "Auf Vorschlag zurücksetzen"}</button>` : ""}
     </article>`;
   const body = $("#sheet-body");
   body.querySelector("[data-speak]")?.addEventListener("click", () => speak(x.w));
@@ -2024,6 +2025,25 @@ function wortEdit(id, note = "") {
     $("#wf-w").focus();
   });
 }
+
+/* ---------- Wortschatz: Bildschirm bleibt beim Wischen still ---------- */
+// Quiz und Sammlung liegen fest über der Seite. Wenn nichts zu scrollen ist, darf das Wischen nichts bewegen.
+(() => {
+  let sx = 0, sy = 0;
+  const host = (e) => e.target.closest?.(".quiz--vocab, .sheet");
+  window.addEventListener("touchstart", (e) => { const t = e.touches[0]; sx = t.clientX; sy = t.clientY; }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (e.touches.length !== 1 || sx <= 24) return;             // Kantenwischen bleibt Sache der Zurück-Geste
+    const h = host(e);
+    if (!h || (h.id === "sheet" && !h.querySelector(".wd, #w-all, .w-input"))) return;
+    if (e.target.closest?.(".chips, textarea")) return;         // Filterleiste und Textfelder dürfen selbst wischen
+    const t = e.touches[0];
+    const horizontal = Math.abs(t.clientX - sx) > Math.abs(t.clientY - sy);
+    const sc = e.target.closest(".quiz-body, .sheet-body");
+    const canScroll = sc && sc.scrollHeight > sc.clientHeight + 1;
+    if (horizontal || !canScroll) { if (e.cancelable) e.preventDefault(); }
+  }, { passive: false });
+})();
 
 /* ---------- Zurück wischen: vom linken Rand nach rechts ---------- */
 const TAB_ORDER = ["news", "lesen", "learn"];
