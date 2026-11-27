@@ -69,11 +69,29 @@ function hash(s) {
 }
 
 /* ---------- Thema und Bezahlschranke ---------- */
+function ruleHit(rules, text) {
+  for (const r of rules) {
+    if (r.not && r.not.some((w) => text.includes(w))) continue;
+    if (r.words.some((w) => text.includes(w))) return r.topic;
+  }
+  return null;
+}
 export function pickTopic(feed, title, summary, rulesets = {}) {
   const rules = rulesets[feed.rules] || [];
-  const text = (title + " " + summary).toLowerCase();
-  for (const r of rules) if (r.words.some((w) => text.includes(w))) return r.topic;
-  return feed.topic;
+  return ruleHit(rules, (title + " " + summary).toLowerCase()) || feed.topic;
+}
+
+/* ---------- Region je Artikel (nur wo der Feed "beide" sagt) ---------- */
+const DE_HINT = /deutschland|deutsche[nrms]?\b|bundestag|bundesrat|bundesregierung|bundeskanzler|kanzler|merz|bundesland|bundesländer|\bländer\b|bayern|bayerisch|berlin\b|münchen|hamburg\b|nrw|sachsen|thüringen|hessen|baden-württemberg|bundesliga|bundeswehr|deutsche bahn|\bbahn\b|bundesnetzagentur|bundesverfassungsgericht|\bcdu\b|\bcsu\b|\bspd\b|\bafd\b|\bgrüne[n]?\b|bundesamt|krankenkasse|jobcenter|\bdax\b|bafög|bürgergeld|deutschlandticket|augsburg|schwaben/i;
+const WORLD_HINT = /\busa\b|\bus-|amerikanisch|trump|biden|harris|washington|china|chinesisch|peking|russland|russisch|putin|ukraine|kiew|israel|gaza|iran|nahost|indien|japan|taiwan|nato\b|\beu\b|brüssel|europäisch|frankreich|macron|großbritannien|london|türkei|syrien|afrika|asien|lateinamerika|weltweit|\buno\b|\bun-|g7|g20|opec|wall street|nasdaq|dow jones/i;
+export function detectRegion(feed, title, summary) {
+  const base = feed.region || "beide";
+  if (feed.section === "lesen" || base !== "beide") return base;
+  const text = title + " " + summary;
+  const de = DE_HINT.test(text), world = WORLD_HINT.test(text);
+  if (de && !world) return "deutschland";
+  if (world && !de) return "welt";
+  return "beide";
 }
 
 // Stufe 1: Kennzeichnung direkt im Feed (Titel-Präfix, Plus-Marker, Paywall-Tag mit positivem Wert)
@@ -110,6 +128,7 @@ export function parseFeed(xml, feed, rulesets = {}) {
 
     const summaryRaw = clean(tag(b, "description") || tag(b, "summary") || tag(b, "content"));
     const summary = truncate(summaryRaw === title ? "" : summaryRaw);
+    if (feed.onlyMatched && !ruleHit(rulesets[feed.rules] || [], (title + " " + summary).toLowerCase())) continue;
     const dateRaw = clean(tag(b, "pubDate") || tag(b, "dc:date") || tag(b, "published") || tag(b, "updated"));
     const date = new Date(dateRaw);
     const image =
@@ -122,7 +141,7 @@ export function parseFeed(xml, feed, rulesets = {}) {
       link,
       source: feed.name,
       section: feed.section || "news",
-      region: feed.section === "lesen" ? null : feed.region || "beide",
+      region: feed.section === "lesen" ? null : detectRegion(feed, title, summary),
       lang: feed.lang || "de",
       topic: pickTopic(feed, title, summary, rulesets),
       date: isNaN(date) ? null : date.toISOString(),
@@ -188,6 +207,124 @@ async function saveCache(cache) {
     await mkdir(dirname(CACHE_FILE), { recursive: true });
     await writeFile(CACHE_FILE, JSON.stringify(cache));
   } catch (e) { console.warn("Merker konnte nicht gespeichert werden:", e.message); }
+}
+
+/* ---------- Fristen & Änderungen ---------- */
+// Findet in Artikeltexten Stichtage ("läuft am 30. November aus", "ab 1. Januar"). Gespeichert werden nur
+// Datum und Art, nie der Artikeltext. Ein Artikel wird nur einmal geladen (Merker im Cache).
+export const FRIST = {
+  horizonD: 120,    // nur Stichtage in den nächsten 120 Tagen
+  maxFetch: 40,     // Artikelseiten pro Lauf
+  budgetMs: 60000,  // Zeitbudget für das Laden
+  keepAfterD: 1,    // nach dem Stichtag noch 1 Tag anzeigen
+  maxItems: 30,
+};
+const MONTH_NAMES = "januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember|jan|feb|mär|mrz|apr|jun|jul|aug|sep|sept|okt|nov|dez";
+const MONTH_NUM = { januar: 1, jan: 1, februar: 2, feb: 2, märz: 3, maerz: 3, mär: 3, mrz: 3, april: 4, apr: 4, mai: 5, juni: 6, jun: 6, juli: 7, jul: 7, august: 8, aug: 8, september: 9, sep: 9, sept: 9, oktober: 10, okt: 10, november: 11, nov: 11, dezember: 12, dez: 12 };
+const WEEKDAY = "(?:montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag),?\\s+(?:den\\s+)?";
+const RE_DATE_TXT = new RegExp(`(?:${WEEKDAY})?(\\d{1,2})\\.\\s?(${MONTH_NAMES})\\.?(?:\\s+(\\d{4}))?(?![\\p{L}\\d])`, "giu");
+const RE_DATE_NUM = /(?:^|[^\d.])(\d{1,2})\.(\d{1,2})\.(?:(\d{4})|(?!\d))/g;
+const RE_MONTH_END = new RegExp(`ende\\s+(${MONTH_NAMES})(?:\\s+(\\d{4}))?(?![\\p{L}])`, "giu");
+const RE_YEAR_END = /jahresende|ende\s+(?:des\s+)?jahres/gi;
+// Was vor / nach dem Datum steht, entscheidet über die Art
+const BEFORE_END = /(?:läuft(?:\s+noch)?|läuft[^.;]{0,40}aus|laufen[^.;]{0,40}aus|endet|enden|ende|ablauf|abläuft|spätestens|frist|stichtag|letzter?\s+tag|bis(?:\s+zum|\s+zu|\s+einschließlich)?|befristet\s+bis|nur\s+noch\s+bis)\s*(?:am|zum|dem|den|des)?\s*(?:\p{L}+,\s+)?(?:den\s+)?$/iu;
+const BEFORE_START = /(?:\bab(?:\s+dem|\s+den)?|tritt|tritt[^.;]{0,30}in\s+kraft|gilt|gelten|startet|beginnt|eingeführt|zum|vom)\s*(?:\p{L}+,\s+)?(?:den\s+)?$/iu;
+const AFTER_END = /^\s*(?:\p{L}+\s+)?aus\b|^[^.;]{0,50}?(?:läuft[^.;]{0,25}aus|endet|ist\s+schluss|laufen[^.;]{0,25}aus|abgelaufen|verfällt|fällt\s+weg)/iu;
+const AFTER_START = /^\s*in\s+kraft|^[^.;]{0,30}?(?:tritt[^.;]{0,20}in\s+kraft|gilt|startet|beginnt|wird\s+eingeführt)/iu;
+
+const pad = (n) => String(n).padStart(2, "0");
+export function berlinToday(now = Date.now()) {
+  return new Date(now).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }); // YYYY-MM-DD
+}
+const dayNum = (iso) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000;
+export const daysBetween = (fromIso, toIso) => Math.round(dayNum(toIso) - dayNum(fromIso));
+const validDay = (y, m, d) => { const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCMonth() === m - 1 && t.getUTCDate() === d; };
+
+function resolveDate(d, m, y, today) {
+  const ty = +today.slice(0, 4);
+  if (y) { if (y < 100) y += 2000; return validDay(y, m, d) ? `${y}-${pad(m)}-${pad(d)}` : null; }
+  for (const yy of [ty, ty + 1]) {
+    if (!validDay(yy, m, d)) continue;
+    const iso = `${yy}-${pad(m)}-${pad(d)}`;
+    if (daysBetween(today, iso) >= -1) return iso;
+  }
+  return null;
+}
+
+// Gibt { deadline: "YYYY-MM-DD", kind: "ende" | "start" } oder null zurück. Früheste Frist in der Zukunft zählt.
+export function extractDeadline(text, now = Date.now()) {
+  const today = berlinToday(now);
+  const found = [];
+  const classify = (idx, len, weak) => {
+    const before = text.slice(Math.max(0, idx - 70), idx);
+    const after = text.slice(idx + len, idx + len + 90);
+    if (BEFORE_END.test(before) || AFTER_END.test(after)) return "ende";
+    if (BEFORE_START.test(before) || AFTER_START.test(after)) return "start";
+    return weak ? "ende" : null;
+  };
+  for (const m of text.matchAll(RE_DATE_TXT)) {
+    const iso = resolveDate(+m[1], MONTH_NUM[m[2].toLowerCase().replace(/\.$/, "")], m[3] ? +m[3] : 0, today);
+    const idx = m.index + m[0].search(/\d/);
+    const kind = iso && classify(idx, m[0].length - (idx - m.index), false);
+    if (iso && kind) found.push({ deadline: iso, kind });
+  }
+  for (const m of text.matchAll(RE_DATE_NUM)) {
+    const iso = resolveDate(+m[1], +m[2], m[3] ? +m[3] : 0, today);
+    const idx = m.index + m[0].search(/\d/);
+    const kind = iso && classify(idx, m[0].length - (idx - m.index), false);
+    if (iso && kind) found.push({ deadline: iso, kind });
+  }
+  for (const m of text.matchAll(RE_MONTH_END)) {
+    const mo = MONTH_NUM[m[1].toLowerCase()];
+    const ty = +today.slice(0, 4);
+    for (const y of m[2] ? [+m[2]] : [ty, ty + 1]) {
+      const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+      const iso = `${y}-${pad(mo)}-${pad(last)}`;
+      if (daysBetween(today, iso) >= -1) { found.push({ deadline: iso, kind: "ende" }); break; }
+    }
+  }
+  for (const m of text.matchAll(RE_YEAR_END)) {
+    const ty = +today.slice(0, 4);
+    for (const y of [ty, ty + 1]) {
+      const iso = `${y}-12-31`;
+      if (daysBetween(today, iso) >= -1) { found.push({ deadline: iso, kind: "ende" }); break; }
+    }
+  }
+  const ok = found.filter((f) => { const d = daysBetween(today, f.deadline); return d >= -1 && d <= FRIST.horizonD; });
+  if (!ok.length) return null;
+  ok.sort((a, b) => a.deadline.localeCompare(b.deadline) || (a.kind === "ende" ? -1 : 1));
+  return ok[0];
+}
+
+// Grober Vorfilter auf Titel und Kurztext: nur diese Artikel werden im Volltext gelesen
+const FRIST_HINT = /tankrabatt|läuft|laufen|auslauf|endet|\bende\b|frist|stichtag|\bab (?:dem )?\d{1,2}\.|\bab (?:januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember|sofort|montag|dienstag|mittwoch|donnerstag|freitag)|in kraft|neue regel|änder|deutschlandticket|rente|steuer|mindestlohn|kindergeld|bürgergeld|wohngeld|bafög|energiepreis|strompreis|gaspreis|förder|zuschuss|gebühr|beitrag|erhöh|abschaff|umstellung|verbraucher|rabatt|entlastung|prämie|bonus|kündig|abgabe|zoll|preis/i;
+export function isFristCandidate(it, alltagFeed) {
+  if (it.section !== "news" || (it.lang || "de") !== "de") return false;
+  if (it.topic === "sport" || it.topic === "kultur") return false;
+  return alltagFeed || FRIST_HINT.test(it.title + " " + it.summary);
+}
+
+// Sichtbarer Text einer Artikelseite (ohne Skripte, Menüs); nur im Speicher, wird nie gespeichert
+export function pageText(html) {
+  let h = html.replace(/<(script|style|noscript|nav|footer|aside|header|form|svg)\b[\s\S]*?<\/\1>/gi, " ");
+  const art = h.match(/<article\b[\s\S]*?<\/article>/i);
+  if (art && art[0].length > 800) h = art[0];
+  return clean(h).slice(0, 60000);
+}
+
+export function dedupeFristen(list) {
+  const out = [];
+  for (const f of list) {
+    const t = termsOf(f.title, "de");
+    const dup = out.some((o) => {
+      if (o.deadline !== f.deadline) return false;
+      let shared = 0;
+      for (const x of t) if (o._t.has(x) && ++shared >= 2) return true;
+      return false;
+    });
+    if (!dup) out.push({ ...f, _t: t });
+  }
+  return out.map(({ _t, ...rest }) => rest);
 }
 
 /* ---------- Schlagzeilen ---------- */
@@ -405,6 +542,44 @@ async function main() {
     return true;
   });
 
+  // Fristen & Änderungen: Stichtage aus Kurztext oder Volltext, über Läufe hinweg gemerkt
+  const fr = (cache.__fristen ||= { t: Date.now(), seen: {}, items: {} });
+  fr.t = Date.now();
+  const today = berlinToday(now);
+  for (const [id, f] of Object.entries(fr.items)) if (daysBetween(today, f.deadline) < -FRIST.keepAfterD) delete fr.items[id];
+  for (const [id, t] of Object.entries(fr.seen)) if (t < now - 21 * 24 * 3600 * 1000) delete fr.seen[id];
+  const fristStats = { fromText: 0, fromPage: 0, fetched: 0, failed: 0 };
+  const keepFrist = (it, d) => {
+    fr.items[it.id] = { id: it.id, title: it.title, summary: it.summary, link: it.link, source: it.source, topic: it.topic, deadline: d.deadline, kind: d.kind };
+  };
+  const toRead = [];
+  for (const it of all) {
+    if (it.section !== "news" || fr.items[it.id]) continue;
+    const alltagFeed = feeds[it._feed]?.topic === "alltag";
+    if (!isFristCandidate(it, alltagFeed)) continue;
+    const d = extractDeadline(it.title + ". " + it.summary, now);
+    if (d) { keepFrist(it, d); fristStats.fromText++; fr.seen[it.id] = now; continue; }
+    if (!fr.seen[it.id]) toRead.push({ it, alltagFeed });
+  }
+  toRead.sort((a, b) => (b.alltagFeed - a.alltagFeed) || (Date.parse(b.it.date) || 0) - (Date.parse(a.it.date) || 0));
+  const frDeadline = Date.now() + FRIST.budgetMs;
+  await pool(toRead.slice(0, FRIST.maxFetch), 6, async ({ it }) => {
+    if (Date.now() > frDeadline) return;
+    try {
+      const d = extractDeadline(pageText(await readPage(it.link)), now);
+      fr.seen[it.id] = now;
+      fristStats.fetched++;
+      if (d) { keepFrist(it, d); fristStats.fromPage++; }
+    } catch {
+      fristStats.failed++; // beim nächsten Lauf nochmal versuchen
+    }
+  });
+  await saveCache(cache);
+  const fristen = dedupeFristen(Object.values(fr.items)
+    .sort((a, b) => a.deadline.localeCompare(b.deadline) || a.title.localeCompare(b.title)))
+    .slice(0, FRIST.maxItems)
+    .map((f) => ({ ...f, summary: truncate(f.summary || "", 200) }));
+
   // Pro Bereich begrenzen
   const count = { news: 0, lesen: 0 };
   const kept = [];
@@ -426,8 +601,11 @@ async function main() {
     sources,
     items,
     groups,
+    fristen,
   }));
 
+  console.log(`FRISTEN: ${fristen.length} aktiv (aus Kurztext ${fristStats.fromText}, aus Volltext ${fristStats.fromPage}, Seiten geladen ${fristStats.fetched}, fehlgeschlagen ${fristStats.failed})`);
+  fristen.slice(0, 8).forEach((f) => console.log(`  ${f.deadline} ${f.kind}: ${f.title} [${f.source}]`));
   const okFeeds = sources.filter((s) => s.ok).length;
   console.log(`${count.news} Nachrichten und ${count.lesen} Lese-Artikel aus ${okFeeds}/${sources.length} Feeds gespeichert.`);
   console.log(`BEZAHLARTIKEL ENTFERNT: ${stats.feedPaid + stats.pagePaid} (Feed-Marker ${stats.feedPaid}, Seitenprüfung ${stats.pagePaid}) | Seiten geprüft: ${stats.pageOk}, nicht prüfbar: ${stats.pageFail}, zurückgestellt: ${stats.pageSkipped}`);

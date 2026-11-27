@@ -48,11 +48,11 @@ document.querySelectorAll(".tabbar button").forEach((b) =>
 /* =================================================================
    NACHRICHTEN und LESEN
    ================================================================= */
-const news = { items: [], groups: [], updated: null, loadedAt: 0, paywall: 0 };
+const news = { items: [], groups: [], fristen: [], updated: null, loadedAt: 0, paywall: 0 };
 const readIds = new Set(store.get("read", []));
 
 const TOPICS = {
-  politik: "Politik", wirtschaft: "Wirtschaft", boerse: "Börse", technik: "Technik",
+  politik: "Politik", augsburg: "Augsburg & Bayern", wirtschaft: "Wirtschaft", alltag: "Alltag", boerse: "Börse", technik: "Technik",
   wissenschaft: "Wissenschaft", sport: "Sport", kultur: "Kultur",
   psychologie: "Psychologie", geschichte: "Geschichte", philosophie: "Philosophie",
   gesellschaft: "Gesellschaft", gesundheit: "Gesundheit",
@@ -90,6 +90,7 @@ async function loadNews() {
     news.updated = data.updated;
     news.paywall = data.stats?.paywallRemoved || 0;
     news.groups = data.groups || [];
+    news.fristen = data.fristen || [];
   } catch {
     if (!news.items.length) $("#news-sub").textContent = "Offline. Keine gespeicherten Meldungen.";
   }
@@ -113,6 +114,51 @@ function dayLabel(iso) {
   if (dayKey(d) === today) return "Heute";
   if (dayKey(d) === dayKey(y)) return "Gestern";
   return d.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" });
+}
+
+/* ---------- Fristen & Änderungen (aus news.json) ---------- */
+// Tage bis zum Stichtag, gerechnet in der Ortszeit des Geräts
+function daysUntil(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  return Math.round((new Date(y, m - 1, d) - t) / 86400000);
+}
+function fristWhen(f) {
+  const n = daysUntil(f.deadline);
+  const date = new Date(f.deadline + "T12:00:00").toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "short" });
+  const rel = n < 0 ? "vorbei" : n === 0 ? "heute" : n === 1 ? "morgen" : `in ${n} Tagen`;
+  return { n, rel, date, verb: f.kind === "start" ? "Gilt ab" : "Endet" };
+}
+function renderFristen() {
+  const box = $("#news-fristen");
+  if (!box) return;
+  const ui = feedUI.news;
+  const list = (news.fristen || [])
+    .filter((f) => daysUntil(f.deadline) >= -1)
+    .sort((a, b) => a.deadline.localeCompare(b.deadline));
+  if (!list.length || ui.query.trim() || !["alle", "alltag"].includes(ui.topic)) { box.innerHTML = ""; return; }
+  const row = (f) => {
+    const w = fristWhen(f);
+    const urgent = w.n <= 3 ? " urgent" : "";
+    return `<a class="fr-row${readIds.has(f.id) ? " read" : ""}" href="${esc(f.link)}" target="_blank" rel="noopener" data-id="${esc(f.id)}">
+      <span class="fr-when${urgent}"><b>${esc(w.rel)}</b><span>${esc(w.verb)} ${esc(w.date)}</span></span>
+      <span class="fr-text"><span class="fr-title">${esc(f.title)}</span><span class="fr-src">${esc(f.source)}</span></span>
+    </a>`;
+  };
+  const top = list.slice(0, 4), rest = list.slice(4);
+  box.innerHTML = `<h2 class="section-title fr-head">Fristen &amp; Änderungen</h2>
+    <div class="fr-list">${top.map(row).join("")}</div>
+    ${rest.length ? `<details class="fr-more"><summary>${rest.length} weitere</summary><div class="fr-list">${rest.map(row).join("")}</div></details>` : ""}`;
+  if (!box.dataset.bound) {
+    box.dataset.bound = "1";
+    box.addEventListener("click", (e) => {
+      const a = e.target.closest("a[data-id]");
+      if (!a) return;
+      saveScroll();
+      markRead(a.dataset.id);
+      a.classList.add("read");
+    });
+  }
 }
 
 /* ---------- Schlagzeilen (Gruppen aus news.json) ---------- */
@@ -248,7 +294,7 @@ function renderFeed(section) {
 
   // Schlagzeilen oben (nur Nachrichten, nur ohne Suchbegriff). Ihre Meldungen fehlen dann in der Zeitliste.
   const heads = section === "news" && !q ? pickHeadlines(ui) : [];
-  if (section === "news") renderHeadlines(heads);
+  if (section === "news") { renderFristen(); renderHeadlines(heads); }
   const shown = new Set(heads.flatMap((g) => g.members));
   const items = matches.filter((it) => !shown.has(it.id));
 

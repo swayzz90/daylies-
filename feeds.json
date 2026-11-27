@@ -9,6 +9,10 @@
       {"topic": "psychologie", "words": ["psycholog", "brain", "cognitive", "neuroscien", "mental health", "emotion", "personality", "behaviour", "behavior", "anxiety", "depress"]},
       {"topic": "geschichte", "words": ["history", "historic", "ancient", "medieval", "roman ", "empire", "archaeolog", "century", "civilization", "pharaoh", "viking", "dynasty", "world war", "colonial"]},
       {"topic": "philosophie", "words": ["philosoph", "ethic", "moral", "existential", "stoic", "metaphys", "nietzsche", "plato", "aristotle"]}
+    ],
+    "regio": [
+      {"topic": "sport", "words": ["fc bayern", "bayern münchen", "bundesliga", "champions league"]},
+      {"topic": "augsburg", "words": ["augsburg", "schwaben", "schwäbisch", "allgäu", "kempten", "memmingen", "neu-ulm", "aichach", "friedberg", "königsbrunn", "stadtbergen", "gersthofen", "stadtwerke", "swa ", "bayern", "bayerisch", "freistaat", "söder", "münchen", "nürnberg", "regensburg"], "not": ["fc bayern", "bayern münchen"]}
     ]
   },
   "feeds": [
@@ -36,7 +40,13 @@
     {"name": "BBC", "top": true, "section": "news", "region": "beide", "topic": "wissenschaft", "lang": "en", "url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"},
     {"name": "The Guardian", "section": "news", "region": "beide", "topic": "wissenschaft", "lang": "en", "url": "https://www.theguardian.com/science/rss"},
     {"name": "tagesschau", "top": true, "section": "news", "region": "deutschland", "topic": "wirtschaft", "url": "https://www.tagesschau.de/wirtschaft/konjunktur/index~rss2.xml"},
-    {"name": "tagesschau", "top": true, "section": "news", "region": "deutschland", "topic": "wirtschaft", "url": "https://www.tagesschau.de/wirtschaft/verbraucher/index~rss2.xml"},
+    {"name": "tagesschau", "top": true, "section": "news", "region": "deutschland", "topic": "alltag", "url": "https://www.tagesschau.de/wirtschaft/verbraucher/index~rss2.xml"},
+    {"name": "Verbraucherzentrale", "section": "news", "region": "deutschland", "topic": "alltag", "url": "https://www.verbraucherzentrale.de/aktuelle-meldungen/feed"},
+    {"name": "Verbraucherzentrale", "section": "news", "region": "deutschland", "topic": "alltag", "url": "https://www.verbraucherzentrale.de/wissen/energie/feed"},
+    {"name": "Verbraucherzentrale", "section": "news", "region": "deutschland", "topic": "alltag", "url": "https://www.verbraucherzentrale.de/wissen/geld-versicherungen/feed"},
+    {"name": "Finanztip", "section": "news", "region": "deutschland", "topic": "alltag", "url": "https://www.finanztip.de/rss-feed-full/"},
+    {"name": "BR24", "section": "news", "region": "deutschland", "topic": "augsburg", "rules": "regio", "onlyMatched": true, "url": "https://feeds.br24.de/rss/nachrichten"},
+    {"name": "BR24", "section": "news", "region": "deutschland", "topic": "augsburg", "rules": "regio", "onlyMatched": true, "url": "https://www.br.de/nachrichten/meldungen/nachrichten-bayerischer-rundfunk100~newsRss.xml"},
     {"name": "tagesschau", "top": true, "section": "news", "region": "welt", "topic": "wirtschaft", "url": "https://www.tagesschau.de/wirtschaft/weltwirtschaft/index~rss2.xml"},
     {"name": "DW", "top": true, "section": "news", "region": "welt", "topic": "wirtschaft", "url": "https://rss.dw.com/atom/rss-de-eco"},
     {"name": "ZDFheute", "top": true, "section": "news", "region": "beide", "topic": "wirtschaft", "url": "https://www.zdf.de/rss/zdf/nachrichten/wirtschaft"},
