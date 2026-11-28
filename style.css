@@ -339,7 +339,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 /* Tab-Leiste */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   padding-bottom: var(--safe-bottom);
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
@@ -705,3 +705,7 @@ a.btn { text-decoration: none; display: inline-block; text-align: center; }
 .fr-more { margin-top: 6px; font-size: 0.86rem; color: var(--muted); }
 .fr-more summary { cursor: pointer; list-style: none; padding: 6px 0; }
 .fr-more summary::-webkit-details-marker { display: none; }
+
+/* Schlagzeilen-Reiter */
+.head-page .hl-big { margin-top: 4px; }
+.head-empty { padding: 28px 0; color: var(--muted); line-height: 1.5; }

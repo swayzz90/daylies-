@@ -84,14 +84,36 @@ export function pickTopic(feed, title, summary, rulesets = {}) {
 /* ---------- Region je Artikel (nur wo der Feed "beide" sagt) ---------- */
 const DE_HINT = /deutschland|deutsche[nrms]?\b|bundestag|bundesrat|bundesregierung|bundeskanzler|kanzler|merz|bundesland|bundesländer|\bländer\b|bayern|bayerisch|berlin\b|münchen|hamburg\b|nrw|sachsen|thüringen|hessen|baden-württemberg|bundesliga|bundeswehr|deutsche bahn|\bbahn\b|bundesnetzagentur|bundesverfassungsgericht|\bcdu\b|\bcsu\b|\bspd\b|\bafd\b|\bgrüne[n]?\b|bundesamt|krankenkasse|jobcenter|\bdax\b|bafög|bürgergeld|deutschlandticket|augsburg|schwaben/i;
 const WORLD_HINT = /\busa\b|\bus-|amerikanisch|trump|biden|harris|washington|china|chinesisch|peking|russland|russisch|putin|ukraine|kiew|israel|gaza|iran|nahost|indien|japan|taiwan|nato\b|\beu\b|brüssel|europäisch|frankreich|macron|großbritannien|london|türkei|syrien|afrika|asien|lateinamerika|weltweit|\buno\b|\bun-|g7|g20|opec|wall street|nasdaq|dow jones/i;
-export function detectRegion(feed, title, summary) {
+// Nur diese Themen haben eine Region; Technik, Sport, Kultur, Wissenschaft bleiben ohne (region: null)
+export const REGION_TOPICS = new Set(["politik", "wirtschaft", "boerse", "alltag", "augsburg"]);
+const RE_DE = new RegExp(DE_HINT.source, "gi");
+const RE_WORLD = new RegExp(WORLD_HINT.source, "gi");
+const hits = (re, text) => (text.match(re) || []).length;
+// Stufe 1: Titel (doppelt gewichtet) und Kurztext
+export function regionScore(title, summary) {
+  return {
+    de: 2 * hits(RE_DE, title) + hits(RE_DE, summary),
+    world: 2 * hits(RE_WORLD, title) + hits(RE_WORLD, summary),
+  };
+}
+// Ergebnis: genau eine Region; unclear = Titel und Kurztext reichen nicht, die Artikelseite wird gelesen
+export function detectRegion(feed, title, summary, topic) {
+  if (feed.section === "lesen") return { region: null, unclear: false };
   const base = feed.region || "beide";
-  if (feed.section === "lesen" || base !== "beide") return base;
-  const text = title + " " + summary;
-  const de = DE_HINT.test(text), world = WORLD_HINT.test(text);
-  if (de && !world) return "deutschland";
-  if (world && !de) return "welt";
-  return "beide";
+  if (base !== "beide") return { region: base, unclear: false };
+  if (topic && !REGION_TOPICS.has(topic)) return { region: null, unclear: false };
+  const sc = regionScore(title, summary);
+  if (sc.de > sc.world) return { region: "deutschland", unclear: false };
+  if (sc.world > sc.de) return { region: "welt", unclear: false };
+  return { region: feed.lang === "en" ? "welt" : "deutschland", unclear: true }; // vorläufige Schätzung nach Quelle
+}
+// Stufe 2: Anfang des Artikeltextes (Ort und Akteure stehen meist vorn); null = auch hier unklar
+export function regionFromText(text) {
+  const head = text.slice(0, 3000);
+  const de = hits(RE_DE, head), world = hits(RE_WORLD, head);
+  if (de >= world + 2) return "deutschland";
+  if (world >= de + 2) return "welt";
+  return null;
 }
 
 // Stufe 1: Kennzeichnung direkt im Feed (Titel-Präfix, Plus-Marker, Paywall-Tag mit positivem Wert)
@@ -134,6 +156,8 @@ export function parseFeed(xml, feed, rulesets = {}) {
     const image =
       attr(b, "enclosure", "url") || attr(b, "media:content", "url") || attr(b, "media:thumbnail", "url") || "";
 
+    const topic = pickTopic(feed, title, summary, rulesets);
+    const rg = detectRegion(feed, title, summary, topic);
     items.push({
       id: hash(link),
       title,
@@ -141,12 +165,13 @@ export function parseFeed(xml, feed, rulesets = {}) {
       link,
       source: feed.name,
       section: feed.section || "news",
-      region: feed.section === "lesen" ? null : detectRegion(feed, title, summary),
+      region: rg.region,
       lang: feed.lang || "de",
-      topic: pickTopic(feed, title, summary, rulesets),
+      topic,
       date: isNaN(date) ? null : date.toISOString(),
       image: /\.(jpe?g|png|webp)/i.test(image) ? image : "",
       _paid: feedMarksPaid(title, b),
+      _rgUnclear: rg.unclear,
       _top: !!feed.top,
     });
   }
@@ -214,8 +239,8 @@ async function saveCache(cache) {
 // Datum und Art, nie der Artikeltext. Ein Artikel wird nur einmal geladen (Merker im Cache).
 export const FRIST = {
   horizonD: 120,    // nur Stichtage in den nächsten 120 Tagen
-  maxFetch: 40,     // Artikelseiten pro Lauf
-  budgetMs: 60000,  // Zeitbudget für das Laden
+  maxFetch: 80,     // Artikelseiten pro Lauf (Region und Fristen zusammen)
+  budgetMs: 75000,  // Zeitbudget für das Laden
   keepAfterD: 1,    // nach dem Stichtag noch 1 Tag anzeigen
   maxItems: 30,
 };
@@ -228,7 +253,7 @@ const RE_MONTH_END = new RegExp(`ende\\s+(${MONTH_NAMES})(?:\\s+(\\d{4}))?(?![\\
 const RE_YEAR_END = /jahresende|ende\s+(?:des\s+)?jahres/gi;
 // Was vor / nach dem Datum steht, entscheidet über die Art
 const BEFORE_END = /(?:läuft(?:\s+noch)?|läuft[^.;]{0,40}aus|laufen[^.;]{0,40}aus|endet|enden|ende|ablauf|abläuft|spätestens|frist|stichtag|letzter?\s+tag|bis(?:\s+zum|\s+zu|\s+einschließlich)?|befristet\s+bis|nur\s+noch\s+bis)\s*(?:am|zum|dem|den|des)?\s*(?:\p{L}+,\s+)?(?:den\s+)?$/iu;
-const BEFORE_START = /(?:\bab(?:\s+dem|\s+den)?|tritt|tritt[^.;]{0,30}in\s+kraft|gilt|gelten|startet|beginnt|eingeführt|zum|vom)\s*(?:\p{L}+,\s+)?(?:den\s+)?$/iu;
+const BEFORE_START = /(?:\bab(?:\s+dem|\s+den)?|tritt|tritt[^.;]{0,30}in\s+kraft|gilt|gelten|startet|beginnt|eingeführt)\s*(?:\p{L}+,\s+)?(?:den\s+)?$/iu;
 const AFTER_END = /^\s*(?:\p{L}+\s+)?aus\b|^[^.;]{0,50}?(?:läuft[^.;]{0,25}aus|endet|ist\s+schluss|laufen[^.;]{0,25}aus|abgelaufen|verfällt|fällt\s+weg)/iu;
 const AFTER_START = /^\s*in\s+kraft|^[^.;]{0,30}?(?:tritt[^.;]{0,20}in\s+kraft|gilt|startet|beginnt|wird\s+eingeführt)/iu;
 
@@ -252,7 +277,7 @@ function resolveDate(d, m, y, today) {
 }
 
 // Gibt { deadline: "YYYY-MM-DD", kind: "ende" | "start" } oder null zurück. Früheste Frist in der Zukunft zählt.
-export function extractDeadline(text, now = Date.now()) {
+export function extractDeadline(text, now = Date.now(), opts = {}) {
   const today = berlinToday(now);
   const found = [];
   const classify = (idx, len, weak) => {
@@ -283,14 +308,14 @@ export function extractDeadline(text, now = Date.now()) {
       if (daysBetween(today, iso) >= -1) { found.push({ deadline: iso, kind: "ende" }); break; }
     }
   }
-  for (const m of text.matchAll(RE_YEAR_END)) {
+  for (const m of opts.yearEnd ? text.matchAll(RE_YEAR_END) : []) {
     const ty = +today.slice(0, 4);
     for (const y of [ty, ty + 1]) {
       const iso = `${y}-12-31`;
       if (daysBetween(today, iso) >= -1) { found.push({ deadline: iso, kind: "ende" }); break; }
     }
   }
-  const ok = found.filter((f) => { const d = daysBetween(today, f.deadline); return d >= -1 && d <= FRIST.horizonD; });
+  const ok = found.filter((f) => { const d = daysBetween(today, f.deadline); return d >= (f.kind === "start" ? 1 : 0) && d <= FRIST.horizonD; });
   if (!ok.length) return null;
   ok.sort((a, b) => a.deadline.localeCompare(b.deadline) || (a.kind === "ende" ? -1 : 1));
   return ok[0];
@@ -298,8 +323,12 @@ export function extractDeadline(text, now = Date.now()) {
 
 // Grober Vorfilter auf Titel und Kurztext: nur diese Artikel werden im Volltext gelesen
 const FRIST_HINT = /tankrabatt|läuft|laufen|auslauf|endet|\bende\b|frist|stichtag|\bab (?:dem )?\d{1,2}\.|\bab (?:januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember|sofort|montag|dienstag|mittwoch|donnerstag|freitag)|in kraft|neue regel|änder|deutschlandticket|rente|steuer|mindestlohn|kindergeld|bürgergeld|wohngeld|bafög|energiepreis|strompreis|gaspreis|förder|zuschuss|gebühr|beitrag|erhöh|abschaff|umstellung|verbraucher|rabatt|entlastung|prämie|bonus|kündig|abgabe|zoll|preis/i;
+// Sendungen, Berichte und Liveticker nennen Daten, die keine Fristen sind
+const NOT_FRIST_TITLE = /heute journal|heute-journal|politbarometer|marktbericht|börse (?:vor|im|am)|tagesschau|tagesthemen|wetter|live(?:blog|ticker|stream)|ticker|podcast|video|sendung|programm|newsletter|horoskop|quiz|kommentar|nachrichten kompakt|news kompakt|update vom|vom \d{1,2}\. \p{L}+ \d{4}/iu;
+export const STRONG_FRIST = /tankrabatt|spritpreis|deckel|rabatt|förder|entlastung|frist|auslauf|befrist|abschaff|prämie|zuschuss|deutschlandticket/i;
 export function isFristCandidate(it, alltagFeed) {
   if (it.section !== "news" || (it.lang || "de") !== "de") return false;
+  if (NOT_FRIST_TITLE.test(it.title)) return false;
   if (it.topic === "sport" || it.topic === "kultur") return false;
   return alltagFeed || FRIST_HINT.test(it.title + " " + it.summary);
 }
@@ -542,39 +571,66 @@ async function main() {
     return true;
   });
 
-  // Fristen & Änderungen: Stichtage aus Kurztext oder Volltext, über Läufe hinweg gemerkt
-  const fr = (cache.__fristen ||= { t: Date.now(), seen: {}, items: {} });
+  // Artikelseiten einmal laden: Region (wenn Titel und Kurztext nicht reichen) und Fristen (Stichtage).
+  // Gemerkt werden nur Ergebnisse (Region, Datum, Art), nie der Text. Der Merker liegt im Action-Cache.
+  const fr = (cache.__fristen ||= {});
+  if (fr.v !== 2) { for (const k of Object.keys(fr)) delete fr[k]; Object.assign(fr, { v: 2, seen: {}, items: {}, rg: {} }); }
   fr.t = Date.now();
   const today = berlinToday(now);
   for (const [id, f] of Object.entries(fr.items)) if (daysBetween(today, f.deadline) < -FRIST.keepAfterD) delete fr.items[id];
   for (const [id, t] of Object.entries(fr.seen)) if (t < now - 21 * 24 * 3600 * 1000) delete fr.seen[id];
-  const fristStats = { fromText: 0, fromPage: 0, fetched: 0, failed: 0 };
+  for (const [id, r] of Object.entries(fr.rg)) if (r.t < now - 21 * 24 * 3600 * 1000) delete fr.rg[id];
+  const pStats = { fromText: 0, fromPage: 0, fetched: 0, failed: 0, rgText: 0, rgPage: 0, rgGuess: 0 };
   const keepFrist = (it, d) => {
     fr.items[it.id] = { id: it.id, title: it.title, summary: it.summary, link: it.link, source: it.source, topic: it.topic, deadline: d.deadline, kind: d.kind };
   };
-  const toRead = [];
+  const need = new Map();
+  const want = (it, key, alltag = false) => {
+    const e = need.get(it.id) || { it, frist: false, region: false, alltag };
+    e[key] = true;
+    need.set(it.id, e);
+  };
   for (const it of all) {
-    if (it.section !== "news" || fr.items[it.id]) continue;
-    const alltagFeed = feeds[it._feed]?.topic === "alltag";
-    if (!isFristCandidate(it, alltagFeed)) continue;
-    const d = extractDeadline(it.title + ". " + it.summary, now);
-    if (d) { keepFrist(it, d); fristStats.fromText++; fr.seen[it.id] = now; continue; }
-    if (!fr.seen[it.id]) toRead.push({ it, alltagFeed });
+    if (it.section !== "news") continue;
+    if (it._rgUnclear) {
+      if (fr.rg[it.id]) { it.region = fr.rg[it.id].r; it._rgUnclear = false; pStats.rgPage++; }
+      else want(it, "region");
+    } else if (it.region && feeds[it._feed]?.region === "beide") pStats.rgText++;
+    if (!fr.items[it.id]) {
+      const alltagFeed = feeds[it._feed]?.topic === "alltag";
+      if (!isFristCandidate(it, alltagFeed)) continue;
+      const d = extractDeadline(it.title + ". " + it.summary, now, { yearEnd: STRONG_FRIST.test(it.title) });
+      if (d) { keepFrist(it, d); pStats.fromText++; fr.seen[it.id] = now; }
+      else if (!fr.seen[it.id]) want(it, "frist", alltagFeed);
+    }
   }
-  toRead.sort((a, b) => (b.alltagFeed - a.alltagFeed) || (Date.parse(b.it.date) || 0) - (Date.parse(a.it.date) || 0));
-  const frDeadline = Date.now() + FRIST.budgetMs;
-  await pool(toRead.slice(0, FRIST.maxFetch), 6, async ({ it }) => {
-    if (Date.now() > frDeadline) return;
+  const pageQueue = [...need.values()].sort((a, b) =>
+    (b.region - a.region) || (b.alltag - a.alltag) || (Date.parse(b.it.date) || 0) - (Date.parse(a.it.date) || 0));
+  const pageDeadline = Date.now() + FRIST.budgetMs;
+  await pool(pageQueue.slice(0, FRIST.maxFetch), 6, async (e) => {
+    if (Date.now() > pageDeadline) return;
+    const it = e.it;
     try {
-      const d = extractDeadline(pageText(await readPage(it.link)), now);
-      fr.seen[it.id] = now;
-      fristStats.fetched++;
-      if (d) { keepFrist(it, d); fristStats.fromPage++; }
+      const text = pageText(await readPage(it.link));
+      pStats.fetched++;
+      if (e.region) {
+        const r = regionFromText(text);
+        if (r) pStats.rgPage++; else pStats.rgGuess++;
+        it.region = r || it.region;
+        it._rgUnclear = false;
+        fr.rg[it.id] = { r: it.region, t: now };
+      }
+      if (e.frist) {
+        fr.seen[it.id] = now;
+        const d = extractDeadline(text, now, { yearEnd: STRONG_FRIST.test(it.title) });
+        if (d) { keepFrist(it, d); pStats.fromPage++; }
+      }
     } catch {
-      fristStats.failed++; // beim nächsten Lauf nochmal versuchen
+      pStats.failed++; // nächster Lauf versucht es wieder; bis dahin gilt die Schätzung nach Quelle
     }
   });
   await saveCache(cache);
+  const fristStats = pStats;
   const fristen = dedupeFristen(Object.values(fr.items)
     .sort((a, b) => a.deadline.localeCompare(b.deadline) || a.title.localeCompare(b.title)))
     .slice(0, FRIST.maxItems)
@@ -592,7 +648,7 @@ async function main() {
 
   // Schlagzeilen aus den behaltenen Nachrichten, danach Hilfsfelder entfernen
   const { groups, info } = groupHeadlines(kept.filter((it) => it.section === "news"), HEADLINES, now);
-  const items = kept.map(({ _feed, _paid, _verdict, _top, ...pub }) => pub);
+  const items = kept.map(({ _feed, _paid, _verdict, _top, _rgUnclear, ...pub }) => pub);
 
   await mkdir(dirname(OUT), { recursive: true });
   await writeFile(OUT, JSON.stringify({
@@ -605,6 +661,7 @@ async function main() {
   }));
 
   console.log(`FRISTEN: ${fristen.length} aktiv (aus Kurztext ${fristStats.fromText}, aus Volltext ${fristStats.fromPage}, Seiten geladen ${fristStats.fetched}, fehlgeschlagen ${fristStats.failed})`);
+  console.log(`REGION: aus Titel/Kurztext ${fristStats.rgText}, aus Volltext/Merker ${fristStats.rgPage}, nach Quelle geschätzt ${fristStats.rgGuess}`);
   fristen.slice(0, 8).forEach((f) => console.log(`  ${f.deadline} ${f.kind}: ${f.title} [${f.source}]`));
   const okFeeds = sources.filter((s) => s.ok).length;
   console.log(`${count.news} Nachrichten und ${count.lesen} Lese-Artikel aus ${okFeeds}/${sources.length} Feeds gespeichert.`);

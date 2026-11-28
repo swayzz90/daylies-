@@ -51,6 +51,15 @@
     </section>
 
 
+    <!-- Schlagzeilen -->
+    <section class="view" id="view-head" aria-labelledby="head-title" hidden>
+      <header class="page-head">
+        <h1 id="head-title">Schlagzeilen</h1>
+        <p class="page-sub" id="head-sub">Wird geladen</p>
+      </header>
+      <div id="head-list" class="headlines head-page"></div>
+    </section>
+
     <!-- Lesen -->
     <section class="view" id="view-lesen" aria-labelledby="lesen-title" hidden>
       <header class="page-head">
@@ -129,6 +138,10 @@
     <button data-tab="news" aria-current="page">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="13" height="15" rx="2"/><path d="M16.5 8.5h3a1 1 0 0 1 1 1v8a2 2 0 0 1-2 2h-2M7 9h6M7 12.5h6M7 16h4"/></svg>
       <span>Nachrichten</span>
+    </button>
+    <button data-tab="head">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 13.5h6L10 21l9-11h-6z"/></svg>
+      <span>Schlagzeilen</span>
     </button>
     <button data-tab="lesen">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z"/></svg>

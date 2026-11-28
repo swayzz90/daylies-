@@ -18,8 +18,8 @@ const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) {
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 /* ---------- Tabs ---------- */
-const views = { news: $("#view-news"), lesen: $("#view-lesen"), learn: $("#view-learn") };
-const scrollPos = { news: 0, lesen: 0, learn: 0 };
+const views = { news: $("#view-news"), head: $("#view-head"), lesen: $("#view-lesen"), learn: $("#view-learn") };
+const scrollPos = { news: 0, head: 0, lesen: 0, learn: 0 };
 let currentTab = store.get("tab", "news");
 if (!views[currentTab]) currentTab = "news";
 let lastY = 0;
@@ -83,7 +83,7 @@ async function loadNews() {
     news.items = (data.items || []).map((it) => ({
       ...it,
       section: it.section || "news",
-      region: it.region ?? it.category ?? "beide",
+      region: it.region === undefined ? (it.category ?? "beide") : it.region,
       topic: it.topic || "politik",
       lang: it.lang || "de",
     }));
@@ -164,31 +164,16 @@ function renderFristen() {
 /* ---------- Schlagzeilen (Gruppen aus news.json) ---------- */
 let hlBox = null;
 
-// Je Ansicht: die stärksten Gruppen zuerst. Bei „Alle“ 1 große + 3 kleine, höchstens 2 pro Thema.
-// Bei einem Thema 1 große + 2 kleine. Ab zwei passenden Gruppen gibt es einen Block.
-function pickHeadlines(ui) {
-  const pool = (news.groups || []).filter((g) =>
-    (langFilter === "alle" || g.lang === langFilter) &&
-    (ui.region === "alle" || g.regions.includes(ui.region) || g.regions.includes("beide")) &&
-    (ui.topic === "alle" || g.topics.includes(ui.topic)));
-  if (pool.length < 2) return [];
-  const all = ui.topic === "alle";
-  const want = all ? 4 : 3;
-  const perTopic = {};
-  const picked = [];
-  for (const g of pool) {                       // news.json ist bereits nach Punkten sortiert
-    if (picked.length === want) break;
-    if (all && (perTopic[g.topic] || 0) >= 2) continue;
-    perTopic[g.topic] = (perTopic[g.topic] || 0) + 1;
-    picked.push(g);
-  }
-  return picked;
+// Reiter „Schlagzeilen“: alle Gruppen nach Punkten, unabhängig von Region und Thema (nur die Sprache zählt).
+function pickHeadlines() {
+  return (news.groups || [])
+    .filter((g) => langFilter === "alle" || g.lang === langFilter)
+    .slice(0, 25);
 }
 
 function renderHeadlines(heads) {
   if (!hlBox) {
-    hlBox = document.createElement("section");
-    hlBox.className = "headlines";
+    hlBox = $("#head-list");
     hlBox.addEventListener("click", (e) => {
       const a = e.target.closest("a[data-id]");
       if (!a) return;
@@ -196,9 +181,14 @@ function renderHeadlines(heads) {
       markRead(a.dataset.id);
       a.classList.add("read");
     });
-    $("#news-list").before(hlBox);
   }
-  if (!heads.length) { hlBox.innerHTML = ""; return; }
+  $("#head-sub").textContent = heads.length
+    ? `${heads.length} Meldungen, über die mehrere Quellen berichten`
+    : "Noch keine Schlagzeilen";
+  if (!heads.length) {
+    hlBox.innerHTML = `<div class="head-empty">Schlagzeilen sind Meldungen, über die mehrere Quellen gleichzeitig berichten. Gerade gibt es keine${langFilter !== "alle" ? " in dieser Sprache. Stell im Reiter Nachrichten die Sprache auf „Alle“" : ""}.</div>`;
+    return;
+  }
 
   const byId = new Map(news.items.map((it) => [it.id, it]));
   const lead = (g) => byId.get(g.lead);
@@ -248,7 +238,7 @@ function renderHeadlines(heads) {
     </article>`;
   };
   const [big, ...small] = heads;
-  hlBox.innerHTML = `<h2 class="section-title hl-head">Schlagzeilen</h2>${bigHtml(big)}${small.map(rowHtml).join("")}`;
+  hlBox.innerHTML = `${bigHtml(big)}${small.map(rowHtml).join("")}`;
 }
 
 function renderFeed(section) {
@@ -268,6 +258,7 @@ function renderFeed(section) {
 
   const all = news.items.filter((it) => it.section === section);
   if (!all.length) {
+    if (section === "news") renderHeadlines([]);
     box.innerHTML = "";
     list.innerHTML = `<div class="empty"><strong>Noch keine Einträge</strong>
       Die Daten kommen nach dem nächsten Lauf der GitHub Action. Starte sie unter Actions mit „Run workflow“.</div>`;
@@ -277,7 +268,7 @@ function renderFeed(section) {
   // Region (nur Nachrichten) und Themen-Chips; Themen ohne Einträge werden ausgeblendet
   const inRegion = all.filter((it) =>
     (langFilter === "alle" || it.lang === langFilter) &&
-    (section !== "news" || ui.region === "alle" || it.region === ui.region || it.region === "beide"));
+    (section !== "news" || ui.region === "alle" || it.region === ui.region));
   const counts = {};
   inRegion.forEach((it) => { counts[it.topic] = (counts[it.topic] || 0) + 1; });
   if (ui.topic !== "alle" && !counts[ui.topic]) ui.topic = "alle";
@@ -292,13 +283,11 @@ function renderFeed(section) {
     (!q || (it.title + " " + it.summary + " " + it.source).toLowerCase().includes(q))
   );
 
-  // Schlagzeilen oben (nur Nachrichten, nur ohne Suchbegriff). Ihre Meldungen fehlen dann in der Zeitliste.
-  const heads = section === "news" && !q ? pickHeadlines(ui) : [];
-  if (section === "news") { renderFristen(); renderHeadlines(heads); }
-  const shown = new Set(heads.flatMap((g) => g.members));
-  const items = matches.filter((it) => !shown.has(it.id));
+  // Fristen oben; Schlagzeilen haben einen eigenen Reiter
+  if (section === "news") { renderFristen(); renderHeadlines(pickHeadlines()); }
+  const items = matches;
 
-  if (!matches.length && !heads.length) {
+  if (!matches.length) {
     list.innerHTML = `<div class="empty"><strong>Keine Treffer</strong>
       ${q ? `Für „${esc(ui.query)}“ gibt es gerade nichts.` : "In dieser Auswahl gibt es gerade nichts."} Versuch einen anderen Begriff, ein anderes Thema oder die Sprache „Alle“.</div>`;
     return;
@@ -439,7 +428,7 @@ if (savedScroll && savedScroll.tab === currentTab && Date.now() - savedScroll.t 
   pendingScroll = { tab: savedScroll.tab, y: savedScroll.y };
 }
 const saveScroll = () => {
-  if ((currentTab === "news" || currentTab === "lesen") && $("#quiz").hidden) {
+  if (["news", "head", "lesen"].includes(currentTab) && $("#quiz").hidden) {
     store.set("scroll", { y: scroller.scrollTop, t: Date.now(), tab: currentTab });
   }
 };
@@ -519,7 +508,7 @@ scroller.addEventListener("scroll", () => {
   const pull = $("#pull");
   let startY = null, dist = 0;
   window.addEventListener("touchstart", (e) => {
-    if ((currentTab !== "news" && currentTab !== "lesen") || scroller.scrollTop > 0 || !$("#quiz").hidden) return;
+    if (!["news", "head", "lesen"].includes(currentTab) || scroller.scrollTop > 0 || !$("#quiz").hidden) return;
     startY = e.touches[0].clientY; dist = 0; pull.classList.add("dragging");
   }, { passive: true });
   window.addEventListener("touchmove", (e) => {
@@ -2092,7 +2081,7 @@ function wortEdit(id, note = "") {
 })();
 
 /* ---------- Zurück wischen: vom linken Rand nach rechts ---------- */
-const TAB_ORDER = ["news", "lesen", "learn"];
+const TAB_ORDER = ["news", "head", "lesen", "learn"];
 function goBack() {
   if (!$("#sheet").hidden) { sheetBack(); return true; }      // Profil oder Album
   if (!$("#quiz").hidden) { closeQuiz(); return true; }        // Spiel
